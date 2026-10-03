@@ -27,6 +27,7 @@ Danach im Browser öffnen: <http://localhost:8757/tempel.html>
 
 - **Haupthalle** mit Steinsockel, Treppe, roten Holzpfeilern, Shoji-Türen, Veranda und zweistöckigem, geschwungenem Dach
 - **Tokyo Tower** (anstelle der früheren Pagode)
+- **Burg Ōsaka** als verkleinertes Modell rechts neben der Halle
 - **Zwei Torii-Tore** und ein Pfad mit Steinlaternen
 - **Teich** mit Holzbrücke
 - **Kiefern und Kirschbäume**
