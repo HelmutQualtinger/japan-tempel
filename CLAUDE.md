@@ -15,6 +15,8 @@ python3 -m http.server 8757   # from this directory; avoid port 5000 (macOS AirP
 # then open http://localhost:8757/tempel.html
 ```
 
+Published via GitHub Pages at https://helmutqualtinger.github.io/japan-tempel/ (`index.html` redirects to `tempel.html`). Both pages carry Open Graph/Twitter tags pointing at `preview.jpg` (1200×630 screenshot with title overlay) — retake it when the scene changes noticeably.
+
 ## Architecture of tempel.html
 
 Everything is one `<script type="module">`, top to bottom in dependency order — later sections reference helpers and materials defined earlier, so keep that order when inserting code:
