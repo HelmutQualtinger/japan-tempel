@@ -785,6 +785,46 @@ function updateDust(dt){
     sp.material.color.setRGB(0.82*dim,0.77*dim,0.65*dim);
   }
 }
+// Schrittgeräusche (Web Audio): kurzer Rauschimpuls je Fußaufsatz, Klang je nach Untergrund.
+// Der AudioContext darf erst nach einer Nutzeraktion starten -> beim ersten Klick/Tippen/Tastendruck.
+let sfx=null;
+function initSfx(){
+  if(sfx) return;
+  const ac=new (window.AudioContext||window.webkitAudioContext)();
+  const buf=ac.createBuffer(1,ac.sampleRate,ac.sampleRate), ch=buf.getChannelData(0);
+  for(let i=0;i<ch.length;i++) ch[i]=Math.random()*2-1;
+  const out=ac.createGain(); out.gain.value=0.9; out.connect(ac.destination);
+  sfx={ac,buf,out};
+}
+for(const ev of ['pointerdown','keydown']) addEventListener(ev,initSfx,{once:true});
+const surfaceAt=(x,z)=>{
+  const y=groundY(x,z);
+  if(y===0) return 'grass';
+  if(y===0.2) return 'gravel';
+  return Math.abs(z-12)<1.5 && x>9.35 && x<22.65 ? 'wood' : 'stone';
+};
+function stepSound(surface,vol){
+  if(!sfx || vol<0.01) return;
+  const {ac,buf,out}=sfx, t=ac.currentTime+0.01;
+  const burst=(type,freq,q,dur,g,at=0)=>{                 // gefiltertes Rauschen mit schnellem Abklingen
+    const src=ac.createBufferSource(), f=ac.createBiquadFilter(), a=ac.createGain();
+    src.buffer=buf; f.type=type; f.frequency.value=freq*(0.85+Math.random()*0.3); f.Q.value=q;
+    a.gain.setValueAtTime(0,t+at); a.gain.linearRampToValueAtTime(g*vol,t+at+0.004);
+    a.gain.exponentialRampToValueAtTime(0.0008,t+at+dur);
+    src.connect(f); f.connect(a); a.connect(out);
+    src.start(t+at,Math.random()*0.8,dur+0.05);
+  };
+  const thump=(f0,f1,dur,g)=>{                            // dumpfer Körperschall
+    const o=ac.createOscillator(), a=ac.createGain();
+    o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(f1,t+dur);
+    a.gain.setValueAtTime(g*vol,t); a.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+    o.connect(a); a.connect(out); o.start(t); o.stop(t+dur+0.02);
+  };
+  if(surface==='gravel'){ burst('bandpass',2600,0.7,0.11,0.55); burst('highpass',4200,0.5,0.07,0.3,0.035); thump(120,70,0.06,0.25); }
+  else if(surface==='wood'){ thump(150,85,0.14,0.9); burst('bandpass',420,2.5,0.09,0.5); }
+  else if(surface==='stone'){ burst('bandpass',1500,1.2,0.045,0.45); thump(170,95,0.05,0.4); }
+  else { burst('lowpass',700,0.5,0.1,0.28); }             // Wiese: weich
+}
 function updateCarl(dt){
   const d=carl, S=d.mesh.scale.x, {body,head,arms,elbows,legs,knees}=d.mesh.userData;
   d.t=(d.t+d.speed*dt/d.len)%1;
@@ -818,6 +858,8 @@ function updateCarl(dt){
   if(step!==Math.floor((prev-Math.PI/2)/Math.PI)){
     const side=(step%2===0?-1:1)*0.08*S, fx=p.x+tg.x*0.7+tg.z*side, fz=p.z+tg.z*0.7-tg.x*side;
     if(v>1.2 && onGravel(fx,fz)) puff(fx,fz,tg,Math.round(2+3*run));
+    const dist=camera.position.distanceTo(p);                      // leiser mit Abstand zur Kamera
+    stepSound(surfaceAt(fx,fz),(0.45+0.55*run)/(1+(dist/28)**2));
   }
   const gl=0.34*(1-0.72*blend)*(1-0.35*rainB);
   for(const m of carlGlow) m.emissiveIntensity=gl;
