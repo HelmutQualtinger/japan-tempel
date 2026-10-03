@@ -486,6 +486,71 @@ for(const [x,z] of [[-14,6],[-18,14],[22,-4],[26,-14],[-10,-24],[14,-24]]){
   const t=sakura(5); t.position.set(x,0,z); scene.add(t); obstacles.push([x,z,1.5]);
 }
 
+// ---------- Tesla (geparkt neben der Halle) ----------
+// In Metern gebaut (Front zeigt nach +X), dann auf Szenenmaßstab skaliert und so gedreht, dass die Front nach +Z zeigt.
+const CAR={x:16.5, z:-8, hw:1.9, hl:4.75};      // Mitte + halbe Breite/Länge in Welt-Einheiten (auch für die Wegsuche)
+function makeTesla(){
+  const g=new THREE.Group();
+  const paint=new THREE.MeshPhysicalMaterial({color:0xf3f4f6,roughness:.32,metalness:.25,clearcoat:1,clearcoatRoughness:.12});
+  const glass=new THREE.MeshPhysicalMaterial({color:0x0c1016,roughness:.08,metalness:.6,clearcoat:1});
+  const black=new THREE.MeshStandardMaterial({color:0x101114,roughness:.8});
+  const tyre=new THREE.MeshStandardMaterial({color:0x16171a,roughness:.95});
+  const rim=new THREE.MeshStandardMaterial({color:0x8d9299,roughness:.35,metalness:.8});
+  const lamp=new THREE.MeshStandardMaterial({color:0xf4f7ff,emissive:0xdfe8ff,emissiveIntensity:.25,roughness:.2});
+  const tail=new THREE.MeshStandardMaterial({color:0x9c0f14,emissive:0xff1a1a,emissiveIntensity:.35,roughness:.3});
+  const W=1.85, WB=1.44, WR=0.34;               // Breite, halber Radstand, Radradius
+  const ext=(shape,width,mat,bevel=0.07)=>{
+    const geo=new THREE.ExtrudeGeometry(shape,{depth:width-2*bevel,bevelEnabled:true,bevelSize:bevel,bevelThickness:bevel,bevelSegments:4,curveSegments:20});
+    geo.translate(0,0,-(width-2*bevel)/2);
+    return mesh(geo,mat);
+  };
+  // Karosserie: Seitenprofil mit Radausschnitten
+  const b=new THREE.Shape();
+  b.moveTo(-2.28,0.30); b.lineTo(-2.34,0.56); b.quadraticCurveTo(-2.36,0.95,-2.18,1.00);
+  b.lineTo(-1.72,1.05); b.lineTo(0.80,1.01);                                  // Heckdeckel, Gürtellinie
+  b.quadraticCurveTo(1.60,0.96,2.10,0.76); b.quadraticCurveTo(2.36,0.64,2.33,0.44); b.lineTo(2.26,0.30);   // Haube, glatte Nase ohne Kühlergrill
+  b.lineTo(WB+0.40,0.30); b.absarc(WB,0.34,0.40,0,Math.PI,false);
+  b.lineTo(-WB+0.40,0.30); b.absarc(-WB,0.34,0.40,0,Math.PI,false);
+  b.lineTo(-2.28,0.30);
+  g.add(ext(b,W,paint));
+  // Kabine: durchgehendes Glasdach mit flach abfallendem Heck
+  const c=new THREE.Shape();
+  c.moveTo(-1.86,1.02); c.quadraticCurveTo(-1.20,1.36,-0.45,1.43); c.quadraticCurveTo(0.05,1.46,0.30,1.38);
+  c.lineTo(1.06,1.00); c.lineTo(-1.86,1.02);
+  g.add(ext(c,1.50,glass,0.10));
+  // Dachholme und B-Säule in Wagenfarbe
+  for(const sz of [-1,1]){
+    const rail=new THREE.Shape();
+    rail.moveTo(-1.80,1.04); rail.quadraticCurveTo(-1.18,1.38,-0.45,1.45); rail.quadraticCurveTo(0.05,1.48,0.31,1.40); rail.lineTo(1.04,1.03);
+    rail.lineTo(0.98,1.01); rail.lineTo(0.28,1.36); rail.quadraticCurveTo(0.04,1.43,-0.45,1.40); rail.quadraticCurveTo(-1.15,1.33,-1.72,1.03); rail.lineTo(-1.80,1.04);
+    const r=ext(rail,0.07,paint,0.012); r.position.z=sz*0.745; g.add(r);
+    g.add(mesh(new THREE.BoxGeometry(0.07,0.40,0.03),black,-0.22,1.22,sz*0.752));
+    g.add(mesh(new THREE.BoxGeometry(0.16,0.09,0.20),paint,0.86,1.06,sz*0.98));        // Außenspiegel
+  }
+  g.add(mesh(new THREE.BoxGeometry(4.30,0.22,1.62),black,0,0.33,0));                    // Unterboden
+  // Räder
+  for(const sx of [-1,1]) for(const sz of [-1,1]){
+    const w=new THREE.Group(); w.position.set(sx*WB,WR,sz*(W/2-0.13));
+    const t=mesh(new THREE.CylinderGeometry(WR,WR,0.24,28),tyre); t.rotation.x=Math.PI/2; w.add(t);
+    const d=mesh(new THREE.CylinderGeometry(0.235,0.235,0.25,24),rim); d.rotation.x=Math.PI/2; w.add(d);
+    for(let i=0;i<5;i++){ const sp=mesh(new THREE.BoxGeometry(0.045,0.21,0.26),black); sp.rotation.z=i*Math.PI*2/5+0.3; sp.position.set(Math.sin(-sp.rotation.z)*0.11,Math.cos(sp.rotation.z)*0.11,0); w.add(sp); }
+    const hub=mesh(new THREE.CylinderGeometry(0.06,0.06,0.27,12),black); hub.rotation.x=Math.PI/2; w.add(hub);
+    g.add(w);
+  }
+  // Scheinwerfer, durchgehendes Rücklichtband, Kennzeichen
+  for(const sz of [-1,1]){
+    const h=mesh(new THREE.BoxGeometry(0.30,0.07,0.36),lamp,2.07,0.775,sz*0.62); h.rotation.z=-0.42; h.rotation.y=-sz*0.35; g.add(h);
+    g.add(mesh(new THREE.BoxGeometry(0.06,0.09,0.46),tail,-2.315,0.90,sz*0.60));
+  }
+  g.add(mesh(new THREE.BoxGeometry(0.04,0.035,1.20),tail,-2.32,0.90,0));
+  g.add(mesh(new THREE.BoxGeometry(0.02,0.12,0.50),new THREE.MeshStandardMaterial({color:0xf2f2f2,roughness:.6}),-2.345,0.66,0));
+  g.add(mesh(new THREE.BoxGeometry(0.30,0.10,1.30),black,2.20,0.40,0));                 // unterer Lufteinlass
+  g.userData={lamp,tail};
+  return g;
+}
+const tesla=makeTesla();
+tesla.scale.setScalar(2); tesla.rotation.y=-Math.PI/2; tesla.position.set(CAR.x,0.2-0.02,CAR.z); scene.add(tesla);
+
 // ---------- Damhirsche ----------
 const D = {
   fur:  new THREE.MeshStandardMaterial({color:0xb07a40, roughness:1}),
@@ -787,6 +852,7 @@ for(const sx of [-1,1]) navCircles.push([sx*9,5,0.8+AGENT_R],[sx*3.2,42,0.5+AGEN
 function navBlocked(x,z){
   if(Math.abs(x)<8+AGENT_R && z>-13.5-AGENT_R && z<-2.5+AGENT_R) return true;                  // Halle samt Veranda und Geländer
   if(Math.abs(x)<11+AGENT_R && z>-16-AGENT_R && z<AGENT_R && !(Math.abs(x)<=11 && z>=-16 && z<=0) && !(Math.abs(x)<3 && z>0)) return true;   // Abstand zur Sockelwand (außer vor der Treppe)
+  if(Math.abs(x-CAR.x)<CAR.hw+AGENT_R && Math.abs(z-CAR.z)<CAR.hl+AGENT_R) return true;           // geparkter Tesla
   if(Math.abs(x+26)<4.1+AGENT_R && Math.abs(z+4)<4.1+AGENT_R) return true;                     // Pagode
   if(((x-16)/(7.8+AGENT_R))**2+((z-12)/(5.46+AGENT_R))**2<1 && Math.abs(z-12)>0.6) return true; // Teich + Steinrand, frei bleibt nur die Brücke
   for(const [ox,oz,r] of navCircles) if((x-ox)**2+(z-oz)**2<r*r) return true;
