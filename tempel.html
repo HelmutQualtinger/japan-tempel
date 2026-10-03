@@ -5,21 +5,33 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Japanischer Tempel – 3D</title>
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#1a1d2b;font-family:system-ui,sans-serif}
-  canvas{display:block}
-  #hud{position:fixed;left:16px;bottom:16px;color:#fff;background:#0008;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.5;backdrop-filter:blur(4px)}
-  #hud b{font-size:15px}
-  #btns{position:fixed;right:16px;top:16px;display:flex;gap:8px}
-  button{background:#0008;color:#fff;border:1px solid #fff4;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px}
-  button:hover{background:#000b}
+  :root{--panel:rgba(18,20,30,.62);--line:rgba(255,255,255,.18);--accent:#e8b04a}
+  html,body{margin:0;height:100%;overflow:hidden;background:#1a1d2b;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff}
+  canvas{display:block;touch-action:none}
+  #hud,#btns{position:fixed;background:var(--panel);border:1px solid var(--line);border-radius:12px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  #hud{left:16px;top:16px;padding:10px 14px;max-width:min(320px,calc(100vw - 32px));box-sizing:border-box}
+  #hud h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.01em}
+  #hud p{margin:4px 0 0;font-size:12px;line-height:1.45;color:rgba(255,255,255,.75)}
+  #btns{left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:6px;padding:6px;max-width:calc(100vw - 32px);box-sizing:border-box}
+  button{flex:1 1 auto;white-space:nowrap;background:transparent;color:#fff;border:1px solid transparent;border-radius:8px;padding:9px 14px;cursor:pointer;font:inherit;font-size:13px;transition:background .15s,border-color .15s,color .15s}
+  button:hover{background:rgba(255,255,255,.12)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  button[aria-pressed="true"]{background:rgba(232,176,74,.22);border-color:var(--accent);color:#ffe2a8}
+  @media (max-width:560px){
+    #hud{top:10px;left:10px;padding:8px 12px}
+    #hud p{display:none}
+    #btns{bottom:10px;flex-wrap:wrap;width:calc(100vw - 20px);max-width:none}
+    button{flex:1 1 40%;padding:10px 8px}
+  }
 </style>
 </head>
 <body>
-<div id="hud"><b>Japanischer Tempel</b><br>Ziehen: drehen · Scrollen: zoomen · Rechtsklick/Shift: verschieben</div>
+<div id="hud"><h1>Japanischer Tempel</h1><p>Ziehen: drehen · Scrollen: zoomen · Rechtsklick/Shift: verschieben</p></div>
 <div id="btns">
-  <button id="rainBtn">Regen</button>
-  <button id="dayBtn">Tag / Nacht</button>
-  <button id="rotBtn">Auto-Rotation</button>
+  <button id="carlBtn" aria-pressed="false">Carl folgen</button>
+  <button id="rainBtn" aria-pressed="false">Regen</button>
+  <button id="dayBtn" aria-pressed="false">Nacht</button>
+  <button id="rotBtn" aria-pressed="false">Auto-Rotation</button>
 </div>
 
 <script type="importmap">
@@ -609,71 +621,126 @@ function updateGiraffe(dt){
 }
 
 // ---------- Carl (3D-Figur, Gesicht aus Foto) ----------
+const CARL={skin:0xe2bab8, hair:0x6a4530, knit:'#aaa392', jeans:0x7d9cc4};
+const carlGlow=[];   // Kopf-Materialien: leichte Eigenhelligkeit, damit das Gesicht wie auf dem Foto wirkt
 function makeCarl(){
-  const g=new THREE.Group();            // blickt nach +Z
+  const g=new THREE.Group();            // blickt nach +Z, linke Körperseite = +X
   const lm=(c,r=.9)=>new THREE.MeshStandardMaterial({color:c,roughness:r});
-  const skin=lm(0xe8b9a0), knit=lm(0xa9a291,1), band=lm(0xeeeae0,1), dark=lm(0x25272e,1),
-        jeans=lm(0x6f8fb8,1), hair=lm(0x9a6a40,1), shoe=lm(0xf0f0f0,.8), sole=lm(0x333333);
-  const body=new THREE.Group(); g.add(body);   // wippt beim Gehen
-  const torso=mesh(new THREE.BoxGeometry(0.34,0.5,0.2),knit,0,1.03,0); body.add(torso);
-  body.add(mesh(new THREE.BoxGeometry(0.352,0.05,0.212),band,0,0.80,0));
-  body.add(mesh(new THREE.BoxGeometry(0.356,0.02,0.216),dark,0,0.835,0));
-  body.add(mesh(new THREE.CylinderGeometry(0.06,0.065,0.1,10),lm(0x666a70),0,1.3,0));
-  // Kopf: Ellipsoid + Haar + gebogene Gesichts-Textur
-  const head=new THREE.Group(); head.position.y=1.5; body.add(head);
-  const R=[0.15,0.195,0.16];
-  const sk=mesh(new THREE.SphereGeometry(1,20,16),skin,0,0,0); sk.scale.set(...R); head.add(sk);
-  const hr=mesh(new THREE.SphereGeometry(1,20,16),hair,0,0.01,-0.015); hr.scale.set(R[0]*1.04,R[1]*1.04,R[2]*1.04); head.add(hr);
-  const fg=new THREE.PlaneGeometry(0.31,0.397,14,16), pos=fg.attributes.position;
-  for(let i=0;i<pos.count;i++){
-    const x=pos.getX(i), y=pos.getY(i);
-    const k=Math.max(0,1-(x/(R[0]*1.04))**2-(y/(R[1]*1.04))**2);
-    pos.setZ(i,R[2]*1.04*(0.6+0.4*Math.sqrt(k))-0.015+0.012);
+  const cap=(r,l,m,x,y,z)=>mesh(new THREE.CapsuleGeometry(r,l,6,12),m,x,y,z);
+  const ctex=(w,h,draw)=>{
+    const c=document.createElement('canvas'); c.width=w; c.height=h; draw(c.getContext('2d'),w,h);
+    const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=8; return t;
+  };
+  // Strick-Texturen: u=0 liegt vorne (+Z) – dort sitzt der Reißverschluss
+  const knitBase=(c,w,h)=>{
+    c.fillStyle=CARL.knit; c.fillRect(0,0,w,h);
+    c.strokeStyle='rgba(60,55,45,.16)'; c.lineWidth=1;
+    for(let x=0;x<w;x+=4){ c.beginPath(); c.moveTo(x+.5,0); c.lineTo(x+.5,h); c.stroke(); }
+  };
+  const torsoTex=ctex(512,256,(c,w,h)=>{
+    knitBase(c,w,h);
+    for(const [y,hh,col] of [[h-46,10,'#f1ede2'],[h-36,9,'#25272e'],[h-27,8,'#f1ede2'],[h-19,7,'#25272e']]){ c.fillStyle=col; c.fillRect(0,y,w,hh); }
+    c.fillStyle='#8f8878'; c.fillRect(0,0,5,h); c.fillRect(w-5,0,5,h);          // Reißverschluss an der Naht
+    c.fillStyle='#d9d5ca'; c.fillRect(0,0,1.5,h); c.fillRect(w-1.5,0,1.5,h);
+    c.font='bold 30px Arial,sans-serif'; c.textAlign='center';
+    c.lineWidth=3; c.strokeStyle='#23252b'; c.strokeText('54',42,86);
+    c.fillStyle='#bdb7a8'; c.fillText('54',42,86);
+  });
+  const armTex=ctex(128,128,(c,w,h)=>{
+    knitBase(c,w,h);
+    for(const u of [.25,.75]){ const x=u*w; c.fillStyle='#f1ede2'; c.fillRect(x-9,0,18,h); c.fillStyle='#25272e'; c.fillRect(x-3,0,6,h); }
+  });
+  const knit=lm(0xaaa392,1), band=lm(0xf1ede2,1), dark=lm(0x25272e,1), jeans=lm(CARL.jeans,1),
+        shoe=lm(0xf4f4f0,.7), sole=lm(0x2c2c30), turtle=lm(0x70757c,1),
+        torsoM=new THREE.MeshStandardMaterial({map:torsoTex,roughness:1}),
+        armM=new THREE.MeshStandardMaterial({map:armTex,roughness:1}),
+        skin=new THREE.MeshStandardMaterial({color:CARL.skin,roughness:.9,emissive:CARL.skin});
+  carlGlow.push(skin);
+
+  const body=new THREE.Group(); g.add(body);   // Oberkörper: wippt und dreht beim Gehen
+  const torso=mesh(new THREE.CylinderGeometry(0.168,0.158,0.46,28,1,true),torsoM,0,0.99,0);
+  torso.scale.z=0.64; body.add(torso);
+  const sh=mesh(new THREE.SphereGeometry(1,20,12),knit,0,1.21,0); sh.scale.set(0.205,0.08,0.11); body.add(sh);
+  const hip=mesh(new THREE.SphereGeometry(1,16,12),jeans,0,0.79,0); hip.scale.set(0.15,0.1,0.098); g.add(hip);
+  body.add(mesh(new THREE.CylinderGeometry(0.066,0.078,0.09,16,1,true),knit,0,1.285,-0.005));   // Stehkragen
+  body.add(mesh(new THREE.CylinderGeometry(0.052,0.058,0.1,14),turtle,0,1.295,0));
+  body.add(mesh(new THREE.CylinderGeometry(0.045,0.05,0.08,12),skin,0,1.35,0));
+
+  // Kopf: Ellipsoid (Haut/Haar), Haarschopf, Ohren und Foto als passgenaue Vorderschale
+  const head=new THREE.Group(); head.position.y=1.55; body.add(head);
+  const R=[0.165,0.205,0.172];
+  const headTex=ctex(256,128,(c,w,h)=>{
+    c.fillStyle='#6a4530'; c.fillRect(0,0,w,h);
+    const gr=c.createLinearGradient(0,h*.36,0,h*.46); gr.addColorStop(0,'rgba(226,186,184,0)'); gr.addColorStop(1,'rgba(226,186,184,1)');
+    c.fillStyle=gr; c.fillRect(w*.02,h*.36,w*.46,h*.64);     // vorne (u≈0.25) unten: Haut
+  });
+  const headM=new THREE.MeshStandardMaterial({map:headTex,roughness:.95,emissive:0xffffff,emissiveMap:headTex});
+  const hs=mesh(new THREE.SphereGeometry(1,32,24),headM,0,0,0); hs.scale.set(...R); head.add(hs);
+  const hairM=new THREE.MeshStandardMaterial({color:CARL.hair,roughness:1,emissive:CARL.hair});
+  const hair=mesh(new THREE.SphereGeometry(1,28,14,0,Math.PI*2,0,1.32),hairM,0,0.004,-0.006);
+  hair.scale.set(R[0]*1.06,R[1]*1.05,R[2]*1.06); hair.rotation.x=-0.5; head.add(hair);
+  for(const sx of [-1,1]){ const e=mesh(new THREE.SphereGeometry(1,10,8),skin,sx*R[0]*0.98,-0.015,-0.008); e.scale.set(0.016,0.036,0.024); head.add(e); }
+  const fg=new THREE.SphereGeometry(1,36,28,Math.PI/2-1.45,2.9,0.12,Math.PI-0.24), fp=fg.attributes.position, fu=fg.attributes.uv;
+  for(let i=0;i<fp.count;i++) fu.setXY(i,0.5+fp.getX(i)/2,0.5+fp.getY(i)/2);   // Foto von vorn projizieren
+  const faceTex=new THREE.TextureLoader().load('face.png'); faceTex.colorSpace=THREE.SRGBColorSpace; faceTex.anisotropy=8;
+  const faceM=new THREE.MeshStandardMaterial({map:faceTex,emissive:0xffffff,emissiveMap:faceTex,roughness:.9,
+    transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
+  const face=new THREE.Mesh(fg,faceM); face.scale.set(R[0]*1.012,R[1]*1.012,R[2]*1.012); head.add(face);
+  carlGlow.push(headM,hairM,faceM);
+
+  // Arme: Schulter + Ellbogen
+  const arms=[], elbows=[];
+  for(const sx of [-1,1]){
+    const p=new THREE.Group(); p.position.set(sx*0.182,1.2,0); p.rotation.z=sx*0.1;
+    p.add(cap(0.05,0.17,armM,0,-0.11,0));
+    const e=new THREE.Group(); e.position.y=-0.245; p.add(e);
+    e.add(cap(0.043,0.15,armM,0,-0.1,0));
+    e.add(mesh(new THREE.CylinderGeometry(0.046,0.044,0.022,12),band,0,-0.175,0));
+    e.add(mesh(new THREE.CylinderGeometry(0.046,0.044,0.016,12),dark,0,-0.194,0));
+    e.add(mesh(new THREE.CylinderGeometry(0.045,0.042,0.02,12),band,0,-0.212,0));
+    const hand=mesh(new THREE.SphereGeometry(1,10,8),skin,0,-0.262,0.004); hand.scale.set(0.03,0.046,0.038); e.add(hand);
+    body.add(p); arms.push(p); elbows.push(e);
   }
-  fg.computeVertexNormals();
-  const ft=new THREE.TextureLoader().load('face.png'); ft.colorSpace=THREE.SRGBColorSpace;
-  head.add(new THREE.Mesh(fg,new THREE.MeshBasicMaterial({map:ft,transparent:true,alphaTest:0.4})));
-  // Arme (Drehpunkt Schulter)
-  const arms=[];
-  for(const s of [-1,1]){
-    const p=new THREE.Group(); p.position.set(s*0.215,1.25,0);
-    p.add(mesh(new THREE.CylinderGeometry(0.045,0.04,0.5,10),knit,0,-0.25,0));
-    p.add(mesh(new THREE.CylinderGeometry(0.047,0.047,0.04,10),band,0,-0.46,0));
-    p.add(mesh(new THREE.SphereGeometry(0.04,10,8),skin,0,-0.55,0));
-    body.add(p); arms.push(p);
-  }
-  // Beine (Hüfte + Knie)
+  // Beine: Hüfte + Knie
   const legs=[], knees=[];
-  for(const s of [-1,1]){
-    const p=new THREE.Group(); p.position.set(s*0.085,0.78,0);
-    p.add(mesh(new THREE.CylinderGeometry(0.075,0.065,0.4,10),jeans,0,-0.2,0));
-    const k=new THREE.Group(); k.position.y=-0.4; p.add(k);
-    k.add(mesh(new THREE.CylinderGeometry(0.063,0.055,0.34,10),jeans,0,-0.17,0));
-    k.add(mesh(new THREE.BoxGeometry(0.11,0.06,0.22),shoe,0,-0.35,0.04));
-    k.add(mesh(new THREE.BoxGeometry(0.115,0.02,0.225),sole,0,-0.385,0.04));
+  for(const sx of [-1,1]){
+    const p=new THREE.Group(); p.position.set(sx*0.08,0.78,0);
+    p.add(cap(0.072,0.23,jeans,0,-0.175,0));
+    const k=new THREE.Group(); k.position.y=-0.36; p.add(k);
+    k.add(cap(0.06,0.22,jeans,0,-0.16,0));
+    k.add(mesh(new THREE.CylinderGeometry(0.064,0.066,0.035,12),jeans,0,-0.325,0));      // Hosensaum
+    const sn=mesh(new THREE.SphereGeometry(1,14,10),shoe,0,-0.365,0.045); sn.scale.set(0.062,0.05,0.125); k.add(sn);
+    k.add(mesh(new THREE.BoxGeometry(0.115,0.022,0.235),sole,0,-0.408,0.045));
     g.add(p); legs.push(p); knees.push(k);
   }
-  g.userData={body,head,arms,legs,knees};
+  g.userData={body,head,arms,elbows,legs,knees};
   return g;
 }
+// Runde: durch die Laternenallee zum kleinen Torii, außen an der Teichseite zurück
 const carl={
-  mesh:makeCarl(), speed:1.6, t:0, phase:0,
-  curve:new THREE.CatmullRomCurve3([V(-6,8),V(2,14),V(4,22),V(-4,26),V(-10,18)],true,'catmullrom',0.5),
+  mesh:makeCarl(), speed:1.5, t:0.02, phase:0,
+  curve:new THREE.CatmullRomCurve3([V(0,6),V(0,14),V(0,24),V(0,32),V(3.5,36.5),V(6.9,32),V(6.6,23),V(6.1,14),V(5.4,7.4),V(2.6,4.8)],true,'catmullrom',0.5),
 };
 carl.len=carl.curve.getLength(); carl.mesh.scale.setScalar(2.0); scene.add(carl.mesh);
 function updateCarl(dt){
-  const d=carl, {body,head,arms,legs,knees}=d.mesh.userData;
+  const d=carl, {body,head,arms,elbows,legs,knees}=d.mesh.userData;
   d.t=(d.t+d.speed*dt/d.len)%1;
   const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t);
   d.mesh.position.copy(p);
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
-  d.phase+=d.speed*dt*3.2;
-  const sw=Math.sin(d.phase)*0.55;
-  legs[0].rotation.x=sw; legs[1].rotation.x=-sw;
-  knees[0].rotation.x=Math.max(0,-sw)*1.1; knees[1].rotation.x=Math.max(0,sw)*1.1;
-  arms[0].rotation.x=-sw*0.7; arms[1].rotation.x=sw*0.7;
-  body.position.y=Math.abs(Math.cos(d.phase))*0.025;
-  head.rotation.y=Math.sin(d.phase*0.5)*0.15;
+  d.phase+=d.speed*dt*2.35;                    // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
+  const s=Math.sin(d.phase), c=Math.cos(d.phase), sw=s*0.5;
+  legs[0].rotation.x=-sw; legs[1].rotation.x=sw;
+  knees[0].rotation.x=0.08+Math.max(0,c)*0.9*(s>-0.2?1:0.4);
+  knees[1].rotation.x=0.08+Math.max(0,-c)*0.9*(s<0.2?1:0.4);
+  arms[0].rotation.x=sw*0.75; arms[1].rotation.x=-sw*0.75;
+  elbows[0].rotation.x=-0.25-Math.max(0,-s)*0.35; elbows[1].rotation.x=-0.25-Math.max(0,s)*0.35;
+  body.position.y=Math.abs(c)*0.022-0.012;
+  body.rotation.y=s*0.09; body.rotation.x=0.04;
+  head.rotation.y=-s*0.09+Math.sin(d.phase*0.23)*0.22;      // schaut sich um
+  head.rotation.z=Math.sin(d.phase*0.31)*0.04;
+  const gl=0.34*(1-0.72*blend)*(1-0.35*rainB);
+  for(const m of carlGlow) m.emissiveIntensity=gl;
 }
 
 // ---------- Himmel / Tag-Nacht ----------
@@ -707,10 +774,30 @@ const rain=new THREE.LineSegments(rainGeo,rainMat);
 rain.frustumCulled=false; rain.visible=false; scene.add(rain);
 let raining=false, rainB=0;
 const grayCol=new THREE.Color(0x6b7482);
-document.getElementById('rainBtn').onclick=()=>{ raining=!raining; };
-
-document.getElementById('dayBtn').onclick=()=>{ night=!night; };
-document.getElementById('rotBtn').onclick=()=>{ controls.autoRotate=!controls.autoRotate; };
+const btn=(id,fn)=>{ const b=document.getElementById(id); b.onclick=()=>b.setAttribute('aria-pressed',String(!!fn())); };
+btn('rainBtn',()=>raining=!raining);
+btn('dayBtn',()=>night=!night);
+btn('rotBtn',()=>controls.autoRotate=!controls.autoRotate);
+// Carl folgen: Kamera rückt nah heran und wandert mit; beim Ausschalten zurück zur vorherigen Ansicht
+let follow=false, savedView=null;
+const carlHead=new THREE.Vector3(), camStep=new THREE.Vector3();
+btn('carlBtn',()=>{
+  follow=!follow;
+  if(follow){
+    savedView={p:camera.position.clone(), t:controls.target.clone()};
+    carl.mesh.getWorldDirection(camStep);                       // vor Carl stellen, leicht seitlich und erhöht
+    carlHead.copy(carl.mesh.position).setY(2.6);
+    controls.target.copy(carlHead);
+    camera.position.copy(carlHead).addScaledVector(camStep,7).add(new THREE.Vector3(camStep.z*2.5,1.2,-camStep.x*2.5));
+  } else if(savedView){ camera.position.copy(savedView.p); controls.target.copy(savedView.t); }
+  return follow;
+});
+function updateFollow(){
+  if(!follow) return;
+  carlHead.copy(carl.mesh.position).setY(2.6);
+  camStep.subVectors(carlHead,controls.target);
+  camera.position.add(camStep); controls.target.add(camStep);
+}
 
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -721,7 +808,7 @@ renderer.setAnimationLoop(()=>{
   blend += ((night?1:0)-blend)*0.05;
   rainB += ((raining?1:0)-rainB)*0.03;
   const dt=Math.min(clock.getDelta(),0.05);
-  updateDeer(dt); updateGiraffe(dt); updateCarl(dt);
+  updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateFollow();
   applyLight(blend);
   rain.visible=rainB>0.01;
   if(rain.visible){
