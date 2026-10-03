@@ -628,7 +628,7 @@ function makeCarl(){
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i), y=pos.getY(i);
     const k=Math.max(0,1-(x/(R[0]*1.04))**2-(y/(R[1]*1.04))**2);
-    pos.setZ(i,R[2]*1.04*(0.6+0.4*Math.sqrt(k))-0.015);
+    pos.setZ(i,R[2]*1.04*(0.6+0.4*Math.sqrt(k))-0.015+0.012);
   }
   fg.computeVertexNormals();
   const ft=new THREE.TextureLoader().load('face.png'); ft.colorSpace=THREE.SRGBColorSpace;
