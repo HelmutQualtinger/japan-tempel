@@ -719,7 +719,7 @@ function makeCarl(){
 }
 // Runde: durch die Laternenallee zum kleinen Torii, außen zurück, über die Brücke und an der Halle vorbei
 const carl={
-  mesh:makeCarl(), speed:1.5, t:0.02, phase:0,
+  mesh:makeCarl(), speed:3.2, t:0.02, phase:0,
   curve:new THREE.CatmullRomCurve3([V(0,6),V(0,14),V(0,24),V(0,32),V(3.5,36.5),V(7,32),V(6.8,22),V(7,14.5),
     V(8.4,12),V(10,12),V(13,12),V(16,12),V(19,12),V(22,12),V(24.4,11.4),V(24.6,7),V(21,3.4),V(15,2.6),V(9,2.2),V(4,3),V(1,4.2)],true,'catmullrom',0.5),
 };
@@ -733,24 +733,70 @@ function bridgeY(x,z){
   return 0;
 }
 carl.len=carl.curve.getLength(); carl.mesh.scale.setScalar(2.0); scene.add(carl.mesh);
+// Staubwölkchen: Sprite-Pool, bei jedem Fußaufsatz auf Kies ein kleiner Schwung
+const dustTex=(()=>{
+  const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
+  const g=x.createRadialGradient(32,32,2,32,32,32); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(.5,'rgba(255,255,255,.45)'); g.addColorStop(1,'rgba(255,255,255,0)');
+  x.fillStyle=g; x.fillRect(0,0,64,64); return new THREE.CanvasTexture(c);
+})();
+const dust=[]; let dustI=0;
+for(let i=0;i<60;i++){
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:dustTex,color:0xd2c4a6,transparent:true,opacity:0,depthWrite:false}));
+  sp.visible=false; sp.userData={life:0,max:1,vel:new THREE.Vector3(),size:1}; scene.add(sp); dust.push(sp);
+}
+const onGravel=(x,z)=>Math.abs(x)<23 && Math.abs(z)<23 && !(Math.abs(x)<2 && z>15) && bridgeY(x,z)===0;
+function puff(x,z,dir){
+  const n=5;
+  for(let k=0;k<n;k++){
+    const sp=dust[dustI=(dustI+1)%dust.length], u=sp.userData;
+    sp.position.set(x+(Math.random()-.5)*0.3,0.28,z+(Math.random()-.5)*0.3);
+    u.vel.set(-dir.x*0.9+(Math.random()-.5)*0.9,0.35+Math.random()*0.5,-dir.z*0.9+(Math.random()-.5)*0.9);
+    u.life=0; u.max=0.9+Math.random()*0.7; u.size=0.35+Math.random()*0.3; sp.visible=true;
+  }
+}
+function updateDust(dt){
+  const dim=1-0.7*blend, dry=1-0.85*rainB;        // nachts dunkler, bei Regen kaum Staub
+  for(const sp of dust){
+    if(!sp.visible) continue;
+    const u=sp.userData; u.life+=dt;
+    if(u.life>=u.max){ sp.visible=false; continue; }
+    const k=u.life/u.max;
+    sp.position.addScaledVector(u.vel,dt); u.vel.multiplyScalar(1-1.8*dt); u.vel.y+=0.15*dt;
+    sp.scale.setScalar(u.size*(1+2.6*k));
+    sp.material.opacity=0.5*(1-k)*Math.min(1,k*8)*dry;
+    sp.material.color.setRGB(0.82*dim,0.77*dim,0.65*dim);
+  }
+}
 function updateCarl(dt){
-  const d=carl, {body,head,arms,elbows,legs,knees}=d.mesh.userData;
+  const d=carl, S=d.mesh.scale.x, {body,head,arms,elbows,legs,knees}=d.mesh.userData;
   d.t=(d.t+d.speed*dt/d.len)%1;
   const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t);
-  p.y=bridgeY(p.x,p.z);
-  d.mesh.position.copy(p);
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
-  d.phase+=d.speed*dt*2.35;                    // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
-  const s=Math.sin(d.phase), c=Math.cos(d.phase), sw=s*0.5;
-  legs[0].rotation.x=-sw; legs[1].rotation.x=sw;
-  knees[0].rotation.x=0.08+Math.max(0,c)*0.9*(s>-0.2?1:0.4);
-  knees[1].rotation.x=0.08+Math.max(0,-c)*0.9*(s<0.2?1:0.4);
-  arms[0].rotation.x=sw*0.75; arms[1].rotation.x=-sw*0.75;
-  elbows[0].rotation.x=-0.25-Math.max(0,-s)*0.35; elbows[1].rotation.x=-0.25-Math.max(0,s)*0.35;
-  body.position.y=Math.abs(c)*0.022-0.012;
-  body.rotation.y=s*0.09; body.rotation.x=0.04;
-  head.rotation.y=-s*0.09+Math.sin(d.phase*0.23)*0.22;      // schaut sich um
-  head.rotation.z=Math.sin(d.phase*0.31)*0.04;
+  const prev=d.phase;
+  d.phase+=d.speed*dt*1.37;                    // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
+  const s=Math.sin(d.phase), c=Math.cos(d.phase), A=0.62;
+  // Joggen: Bein 0 schwingt mit s nach vorn, Bein 1 gegengleich; das vorschwingende Bein winkelt stark an
+  const a=[A*s,-A*s], kn=[0.2+1.25*Math.max(0,c)+0.35*Math.max(0,-s), 0.2+1.25*Math.max(0,-c)+0.35*Math.max(0,s)];
+  let low=Infinity;
+  for(let i=0;i<2;i++){
+    legs[i].rotation.x=-a[i]; knees[i].rotation.x=kn[i];
+    low=Math.min(low,0.78-0.36*Math.cos(a[i])-0.42*Math.cos(a[i]-kn[i]));
+  }
+  arms[0].rotation.x=A*s*1.1; arms[1].rotation.x=-A*s*1.1;       // Arme gegengleich, Ellbogen angewinkelt
+  elbows[0].rotation.x=-1.35-0.25*s; elbows[1].rotation.x=-1.35+0.25*s;
+  body.position.y=0; body.rotation.x=0.16; body.rotation.y=s*0.14;
+  head.rotation.x=-0.1;
+  head.rotation.y=-s*0.14+Math.sin(d.phase*0.17)*0.2;        // schaut sich um
+  head.rotation.z=Math.sin(d.phase*0.23)*0.04;
+  // tiefster Fuß steht auf dem Boden, dazwischen eine kurze Flugphase
+  p.y=bridgeY(p.x,p.z)+S*(-low+0.035*Math.abs(c));
+  d.mesh.position.copy(p);
+  // Fußaufsatz (Bein ganz vorn): Staub auf Kies
+  const step=Math.floor((d.phase-Math.PI/2)/Math.PI);
+  if(step!==Math.floor((prev-Math.PI/2)/Math.PI)){
+    const side=(step%2===0?-1:1)*0.08*S, fx=p.x+tg.x*0.7+tg.z*side, fz=p.z+tg.z*0.7-tg.x*side;
+    if(onGravel(fx,fz)) puff(fx,fz,tg);
+  }
   const gl=0.34*(1-0.72*blend)*(1-0.35*rainB);
   for(const m of carlGlow) m.emissiveIntensity=gl;
 }
@@ -858,7 +904,7 @@ btn('carlBtn',()=>{
   if(follow){
     savedView={p:camera.position.clone(), t:controls.target.clone()};
     carl.mesh.getWorldDirection(camStep);                       // vor Carl stellen, leicht seitlich und erhöht
-    carlHead.copy(carl.mesh.position); carlHead.y+=2.6;
+    carlHead.copy(carl.mesh.position); carlHead.y=bridgeY(carlHead.x,carlHead.z)+2.6;
     controls.target.copy(carlHead);
     camera.position.copy(carlHead).addScaledVector(camStep,7).add(new THREE.Vector3(camStep.z*2.5,1.2,-camStep.x*2.5));
   } else if(savedView){ camera.position.copy(savedView.p); controls.target.copy(savedView.t); }
@@ -866,7 +912,7 @@ btn('carlBtn',()=>{
 });
 function updateFollow(){
   if(!follow) return;
-  carlHead.copy(carl.mesh.position); carlHead.y+=2.6;
+  carlHead.copy(carl.mesh.position); carlHead.y=bridgeY(carlHead.x,carlHead.z)+2.6;
   camStep.subVectors(carlHead,controls.target);
   camera.position.add(camStep); controls.target.add(camStep);
 }
@@ -880,7 +926,7 @@ renderer.setAnimationLoop(()=>{
   blend += ((night?1:0)-blend)*0.05;
   rainB += ((raining?1:0)-rainB)*0.03;
   const dt=Math.min(clock.getDelta(),0.05);
-  updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateFollow();
+  updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateDust(dt); updateFollow();
   applyLight(blend);
   rain.visible=rainB>0.01;
   if(rain.visible){
