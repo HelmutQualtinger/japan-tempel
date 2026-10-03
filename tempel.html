@@ -44,7 +44,7 @@
 </style>
 </head>
 <body>
-<div id="hud"><h1>Japanischer Tempel</h1><p>Ziehen: drehen · Scrollen: zoomen · Rechtsklick/Shift: verschieben</p></div>
+<div id="hud"><h1>Japanischer Tempel</h1><p>Ziehen: drehen · Scrollen: zoomen · Rechtsklick/Shift: verschieben · Klick auf den Boden: Carl läuft dorthin</p></div>
 <div id="btns">
   <button id="carlBtn" aria-pressed="false">Carl folgen</button>
   <label id="speed" title="Carls Tempo"><span>Tempo</span><input id="speedIn" type="range" min="0" max="7" step="0.1" value="3.2" aria-label="Carls Tempo"></label>
@@ -472,16 +472,17 @@ function sakura(h=5){
   return g;
 }
 let seed=7; const rnd=()=> (seed=(seed*16807)%2147483647)/2147483647;
+const obstacles=[];   // [x,z,Radius] für die Wegsuche (Bäume; Laternen, Torii usw. kommen im Navigations-Abschnitt dazu)
 for(let i=0;i<70;i++){
   const a=rnd()*Math.PI*2, r=30+rnd()*50;
   const x=Math.cos(a)*r, z=Math.sin(a)*r;
   if(Math.abs(x)<8 && z>10) continue;
   const t = rnd()<0.35 ? sakura(4+rnd()*2) : pine(5+rnd()*5);
   t.position.set(x,0,z); t.rotation.y=rnd()*6;
-  scene.add(t);
+  scene.add(t); obstacles.push([x,z,1.5]);
 }
 for(const [x,z] of [[-14,6],[-18,14],[22,-4],[26,-14],[-10,-24],[14,-24]]){
-  const t=sakura(5); t.position.set(x,0,z); scene.add(t);
+  const t=sakura(5); t.position.set(x,0,z); scene.add(t); obstacles.push([x,z,1.5]);
 }
 
 // ---------- Damhirsche ----------
@@ -754,12 +755,16 @@ const carl={
     V(2.8,-1.45),V(1.4,-0.4),V(1.2,1.6),V(0.5,3.8)],true,'catmullrom',0.5),
 };
 carl.len=carl.curve.getLength(); carl.mesh.scale.setScalar(2.0); scene.add(carl.mesh);
+// Zustand: 'loop' = feste Runde auf der Kurve, 'free' = läuft einen gesuchten Weg (path) zum Klickziel ab
+Object.assign(carl,{mode:'loop', path:[], resume:null, move:1, trail:[],
+  pos:carl.curve.getPointAt(carl.t), dir:carl.curve.getTangentAt(carl.t), want:new THREE.Vector3(0,0,1)});
 // Bodenhöhe unter Carl (Oberkanten der Geometrie – bei Umbauten an Hof, Weg, Halle, Teich oder Brücke anpassen)
 function groundY(x,z){
   const ax=Math.abs(x);
   if(ax<=10 && z<=-1 && z>=-15) return 1.7;                         // Steinsockel der Halle
   if(ax<3 && z>-1 && z<1.2) return 0.22+(1.2-z)*0.582;              // Hallentreppe: knapp unter der Stufenkanten-Linie
   if(ax<3 && z>=1.2 && z<1.6) return 0.2+0.02*(1.6-z)/0.4;
+  if(ax<=11 && z<=0 && z>=-16) return 0.9;                          // untere Sockelstufe
   if(Math.abs(z-12)<1.5 && x>7.6 && x<24.4){                        // Teichrand + Brückenbogen (Planken x 10..22)
     const m=x>16?32-x:x;                                            // symmetrisch zur Brückenmitte
     if(m>=10) return 0.49+Math.sin((x-10)/12*Math.PI)*1.3;
@@ -771,6 +776,152 @@ function groundY(x,z){
   if(ax<23 && Math.abs(z)<23) return 0.2;                           // Kieshof
   return 0;                                                         // Wiese
 }
+// ---------- Navigation: Raster + A* für Klickziele ----------
+// Zelle begehbar = kein Hindernis; Schritt zwischen Nachbarzellen nur bei kleinem Höhenunterschied (groundY),
+// so führt der Weg auf den Sockel nur über die Treppe und über den Teich nur über die Brücke.
+const NAV_C=0.5, NAV_N=240, NAV_H=NAV_C*NAV_N/2, NAV_STEP=0.36, AGENT_R=0.5;
+const navCircles=obstacles.slice();
+for(let i=0;i<7;i++) for(const sx of [-1,1]) navCircles.push([sx*3.4,8+i*4.2,0.65+AGENT_R]);   // Laternenallee
+for(const sx of [-1,1]) navCircles.push([sx*9,5,0.8+AGENT_R],[sx*3.2,42,0.5+AGENT_R],[sx*2.24,28,0.35+AGENT_R]);   // große Laternen, Torii-Pfosten
+function navBlocked(x,z){
+  if(Math.abs(x)<8+AGENT_R && z>-13.5-AGENT_R && z<-2.5+AGENT_R) return true;                  // Halle samt Veranda und Geländer
+  if(Math.abs(x)<11+AGENT_R && z>-16-AGENT_R && z<AGENT_R && !(Math.abs(x)<=11 && z>=-16 && z<=0) && !(Math.abs(x)<3 && z>0)) return true;   // Abstand zur Sockelwand (außer vor der Treppe)
+  if(Math.abs(x+26)<4.1+AGENT_R && Math.abs(z+4)<4.1+AGENT_R) return true;                     // Pagode
+  if(((x-16)/(7.8+AGENT_R))**2+((z-12)/(5.46+AGENT_R))**2<1 && Math.abs(z-12)>0.6) return true; // Teich + Steinrand, frei bleibt nur die Brücke
+  for(const [ox,oz,r] of navCircles) if((x-ox)**2+(z-oz)**2<r*r) return true;
+  return false;
+}
+const navY=new Float32Array(NAV_N*NAV_N), navOk=new Uint8Array(NAV_N*NAV_N), navReach=new Uint8Array(NAV_N*NAV_N);
+const navX=i=>(i+0.5)*NAV_C-NAV_H;
+const navCell=(x,z)=>{
+  const i=Math.min(NAV_N-1,Math.max(0,Math.floor((x+NAV_H)/NAV_C))), j=Math.min(NAV_N-1,Math.max(0,Math.floor((z+NAV_H)/NAV_C)));
+  return j*NAV_N+i;
+};
+for(let j=0;j<NAV_N;j++) for(let i=0;i<NAV_N;i++){
+  const k=j*NAV_N+i, x=navX(i), z=navX(j);
+  navY[k]=groundY(x,z); navOk[k]=navBlocked(x,z)?0:1;
+}
+const navStep=(a,b)=>navOk[b]===1 && Math.abs(navY[a]-navY[b])<=NAV_STEP;
+const NAV_NB=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,1,Math.SQRT2],[-1,-1,Math.SQRT2]];
+function navNeighbors(k,fn){
+  const i=k%NAV_N, j=(k-i)/NAV_N;
+  for(const [di,dj,c] of NAV_NB){
+    const i2=i+di, j2=j+dj; if(i2<0||j2<0||i2>=NAV_N||j2>=NAV_N) continue;
+    const k2=j2*NAV_N+i2; if(!navStep(k,k2)) continue;
+    if(di && dj && !(navStep(k,j*NAV_N+i2) && navStep(k,j2*NAV_N+i))) continue;      // nicht über Ecken schneiden
+    fn(k2,c);
+  }
+}
+{ // alles, was von Carls Startpunkt aus erreichbar ist
+  const st=[navCell(carl.pos.x,carl.pos.z)]; navReach[st[0]]=1;
+  while(st.length){ navNeighbors(st.pop(),k2=>{ if(!navReach[k2]){ navReach[k2]=1; st.push(k2); } }); }
+}
+const navFree=(x,z)=>Math.abs(x)<NAV_H && Math.abs(z)<NAV_H && navReach[navCell(x,z)]===1;
+function navNearest(x,z){                       // nächste erreichbare Zelle zu einem beliebigen Punkt
+  const k0=navCell(x,z); if(navReach[k0]) return k0;
+  const i0=k0%NAV_N, j0=(k0-i0)/NAV_N;
+  for(let r=1;r<90;r++){
+    let best=-1, bd=Infinity;
+    for(let j=j0-r;j<=j0+r;j++) for(let i=i0-r;i<=i0+r;i++){
+      if(Math.max(Math.abs(i-i0),Math.abs(j-j0))!==r || i<0||j<0||i>=NAV_N||j>=NAV_N) continue;
+      const k=j*NAV_N+i; if(!navReach[k]) continue;
+      const dd=(navX(i)-x)**2+(navX(j)-z)**2; if(dd<bd){ bd=dd; best=k; }
+    }
+    if(best>=0) return best;
+  }
+  return -1;
+}
+function navSight(a,b){                         // freie, stufenlose Sicht zwischen zwei Punkten?
+  const L=Math.hypot(b.x-a.x,b.z-a.z), n=Math.max(1,Math.ceil(L/0.2));
+  let pk=navCell(a.x,a.z);
+  for(let i=1;i<=n;i++){
+    const k=navCell(a.x+(b.x-a.x)*i/n,a.z+(b.z-a.z)*i/n);
+    if(!navReach[k] || Math.abs(navY[k]-navY[pk])>NAV_STEP) return false;
+    pk=k;
+  }
+  return true;
+}
+const aG=new Float32Array(NAV_N*NAV_N), aP=new Int32Array(NAV_N*NAV_N), aDone=new Uint8Array(NAV_N*NAV_N);
+function findPath(sx,sz,tx,tz){
+  const s=navNearest(sx,sz), t=navNearest(tx,tz); if(s<0||t<0) return null;
+  aG.fill(Infinity); aDone.fill(0); aG[s]=0; aP[s]=-1;
+  const ti=t%NAV_N, tj=(t-ti)/NAV_N;
+  const hf=[], hk=[];                           // Binär-Heap nach f=g+h
+  const push=(f,k)=>{ let n=hf.length; hf.push(f); hk.push(k);
+    while(n>0){ const m=(n-1)>>1; if(hf[m]<=hf[n]) break; [hf[m],hf[n]]=[hf[n],hf[m]]; [hk[m],hk[n]]=[hk[n],hk[m]]; n=m; } };
+  const pop=()=>{ const k=hk[0], lf=hf.pop(), lk=hk.pop();
+    if(hf.length){ hf[0]=lf; hk[0]=lk; let n=0;
+      for(;;){ const l=2*n+1, r=l+1; let m=n; if(l<hf.length&&hf[l]<hf[m]) m=l; if(r<hf.length&&hf[r]<hf[m]) m=r; if(m===n) break;
+        [hf[m],hf[n]]=[hf[n],hf[m]]; [hk[m],hk[n]]=[hk[n],hk[m]]; n=m; } }
+    return k; };
+  push(0,s);
+  let found=false;
+  while(hf.length){
+    const k=pop(); if(aDone[k]) continue; aDone[k]=1;
+    if(k===t){ found=true; break; }
+    navNeighbors(k,(k2,c)=>{
+      if(aDone[k2]) return;
+      const g=aG[k]+c; if(g>=aG[k2]) return;
+      aG[k2]=g; aP[k2]=k;
+      const di=Math.abs(k2%NAV_N-ti), dj=Math.abs(Math.floor(k2/NAV_N)-tj);
+      push(g+Math.max(di,dj)+0.4142*Math.min(di,dj),k2);
+    });
+  }
+  if(!found) return null;
+  const pts=[];
+  for(let k=t;k!==-1;k=aP[k]) pts.push({x:navX(k%NAV_N),z:navX(Math.floor(k/NAV_N))});
+  pts.reverse();
+  if(navCell(tx,tz)===t) pts[pts.length-1]={x:tx,z:tz};          // exaktes Ziel statt Zellmitte
+  pts[0]={x:sx,z:sz};
+  const out=[];                                                   // Zickzack glätten: jeweils weitesten sichtbaren Punkt ansteuern
+  for(let a=0;a<pts.length-1;){
+    let b=pts.length-1; while(b>a+1 && !navSight(pts[a],pts[b])) b--;
+    out.push(pts[b]); a=b;
+  }
+  return out;
+}
+// Zielmarke am Boden
+const goalMark=new THREE.Mesh(new THREE.RingGeometry(0.45,0.62,32).rotateX(-Math.PI/2),
+  new THREE.MeshBasicMaterial({color:0xe8b04a,transparent:true,opacity:0.85,depthWrite:false}));
+goalMark.visible=false; scene.add(goalMark);
+function sendCarl(x,z,resume=null){
+  const path=findPath(carl.pos.x,carl.pos.z,x,z);
+  if(!path || !path.length){ if(resume!==null){ carl.mode='loop'; carl.t=resume; } return false; }
+  carl.mode='free'; carl.path=path; carl.resume=resume;
+  const g=path[path.length-1];
+  goalMark.visible=resume===null; goalMark.position.set(g.x,groundY(g.x,g.z)+0.06,g.z);
+  return true;
+}
+// zurück auf die Runde: zum nächstgelegenen Punkt der Kurve laufen und dort wieder einfädeln
+const loopSamples=Array.from({length:400},(_,i)=>{ const t=i/400, p=carl.curve.getPointAt(t); return {t,x:p.x,z:p.z}; });
+function resumeLoop(){
+  if(carl.mode==='loop') return;
+  let best=null, bd=Infinity;
+  const y0=groundY(carl.pos.x,carl.pos.z);                    // Punkte auf gleicher Höhe bevorzugen (nicht den Sockel von unten ansteuern)
+  for(const q of loopSamples){
+    const dd=(q.x-carl.pos.x)**2+(q.z-carl.pos.z)**2+(Math.abs(groundY(q.x,q.z)-y0)>0.4?1e4:0);
+    if(dd<bd && navFree(q.x,q.z)){ bd=dd; best=q; }
+  }
+  if(best) sendCarl(best.x,best.z,best.t); else carl.mode='loop';
+}
+const turnTo=(dir,want,maxStep)=>{              // Blickrichtung weich auf die Laufrichtung drehen
+  const cur=Math.atan2(dir.x,dir.z); let df=Math.atan2(want.x,want.z)-cur;
+  df=Math.atan2(Math.sin(df),Math.cos(df));
+  const a=cur+Math.max(-maxStep,Math.min(maxStep,df)); dir.set(Math.sin(a),0,Math.cos(a));
+};
+// einem Wegpunkt-Array folgen; verbrauchte Punkte werden entfernt. Liefert true, wenn sich etwas bewegt hat.
+function walkPath(pos,path,want,step){
+  let moved=false;
+  while(step>1e-6 && path.length){
+    const w=path[0], dx=w.x-pos.x, dz=w.z-pos.z, L=Math.hypot(dx,dz);
+    if(L>1e-6) want.set(dx/L,0,dz/L);
+    if(L<=step){ pos.x=w.x; pos.z=w.z; step-=L; path.shift(); }
+    else{ pos.x+=dx/L*step; pos.z+=dz/L*step; step=0; }
+    moved=true;
+  }
+  return moved;
+}
+
 // Staubwölkchen: Sprite-Pool, bei jedem Fußaufsatz auf Kies ein kleiner Schwung
 const dustTex=(()=>{
   const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
@@ -846,35 +997,52 @@ function stepSound(surface,vol){
 }
 function updateCarl(dt){
   const d=carl, S=d.mesh.scale.x, {body,head,arms,elbows,legs,knees}=d.mesh.userData;
-  d.t=(d.t+d.speed*dt/d.len)%1;
-  const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t);
+  const p=d.pos, tg=d.dir, v=d.speed;
+  let moving=false;
+  if(d.mode==='loop'){
+    d.t=(d.t+v*dt/d.len)%1;
+    const q=d.curve.getPointAt(d.t); p.x=q.x; p.z=q.z; tg.copy(d.curve.getTangentAt(d.t)).setY(0).normalize();
+    moving=v>0;
+  } else {
+    moving=walkPath(p,d.path,d.want,v*dt);
+    turnTo(tg,d.want,dt*9);
+    if(!d.path.length){
+      goalMark.visible=false;
+      if(d.resume!==null){ d.mode='loop'; d.t=d.resume; d.resume=null; }     // wieder auf der Runde
+    }
+  }
+  if(goalMark.visible) goalMark.scale.setScalar(1+0.12*Math.sin(clock.elapsedTime*6));
+  d.move+=((moving?1:0)-d.move)*Math.min(1,dt*8);                         // 0 = steht, 1 = läuft (weicher Übergang)
+  const mv=d.move;
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
-  const prev=d.phase, v=d.speed, run=Math.min(1,Math.max(0,(v-1)/2.2));   // 0 = Gehen, 1 = Joggen (Regler)
-  const A=0.34+0.28*run;                                                  // Schwungweite der Beine
-  d.phase+=v*dt*Math.PI/(2*0.78*Math.sin(A)*S*(1+0.265*run));             // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
+  const tr=d.trail, last=tr[tr.length-1];                                 // Spur für den Hirsch
+  if(!last || (p.x-last.x)**2+(p.z-last.z)**2>0.09){ tr.push({x:p.x,z:p.z}); if(tr.length>3000) tr.shift(); }
+  const prev=d.phase, run=Math.min(1,Math.max(0,(v-1)/2.2));              // 0 = Gehen, 1 = Joggen (Regler)
+  const A0=0.34+0.28*run, A=A0*mv;                                        // Schwungweite der Beine
+  if(moving) d.phase+=v*dt*Math.PI/(2*0.78*Math.sin(A0)*S*(1+0.265*run)); // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
   const s=Math.sin(d.phase), c=Math.cos(d.phase);
   // Bein 0 schwingt mit s nach vorn, Bein 1 gegengleich; das vorschwingende Bein winkelt an (beim Joggen stark)
   const kb=0.7+0.55*run, kick=0.35*run;
-  const a=[A*s,-A*s], kn=[0.12+0.08*run+kb*Math.max(0,c)+kick*Math.max(0,-s), 0.12+0.08*run+kb*Math.max(0,-c)+kick*Math.max(0,s)];
+  const a=[A*s,-A*s], kn=[mv*(0.12+0.08*run+kb*Math.max(0,c)+kick*Math.max(0,-s)), mv*(0.12+0.08*run+kb*Math.max(0,-c)+kick*Math.max(0,s))];
   let low=Infinity;
   for(let i=0;i<2;i++){
     legs[i].rotation.x=-a[i]; knees[i].rotation.x=kn[i];
     const f=a[i]-kn[i], sf=Math.sin(f);            // Unterschenkelwinkel; Sohle reicht von der Ferse (-0.07) bis zur Spitze (+0.16)
     low=Math.min(low,0.78-0.36*Math.cos(a[i])-0.42*Math.cos(f)+Math.min(0.16*sf,-0.07*sf));
   }
-  const arm=A*(0.8+0.3*run), eb=0.3+1.05*run;                   // Arme gegengleich, Ellbogen beim Joggen angewinkelt
+  const arm=A*(0.8+0.3*run), eb=0.12+(0.18+1.05*run)*mv;                   // Arme gegengleich, Ellbogen beim Joggen angewinkelt
   arms[0].rotation.x=arm*s; arms[1].rotation.x=-arm*s;
-  elbows[0].rotation.x=-eb-0.25*s; elbows[1].rotation.x=-eb+0.25*s;
-  body.position.y=0; body.rotation.x=0.04+0.12*run; body.rotation.y=s*(0.08+0.06*run);
-  head.rotation.x=-0.1*run;
-  head.rotation.y=-s*(0.08+0.06*run)+Math.sin(d.phase*0.17)*0.2;        // schaut sich um
-  head.rotation.z=Math.sin(d.phase*0.23)*0.04;
+  elbows[0].rotation.x=-eb-0.25*s*mv; elbows[1].rotation.x=-eb+0.25*s*mv;
+  body.position.y=0; body.rotation.x=(0.04+0.12*run)*mv; body.rotation.y=s*(0.08+0.06*run)*mv;
+  head.rotation.x=-0.1*run*mv;
+  head.rotation.y=-s*(0.08+0.06*run)*mv+Math.sin(clock.elapsedTime*0.7)*0.2;   // schaut sich um
+  head.rotation.z=Math.sin(clock.elapsedTime*0.9)*0.04;
   // tiefster Fuß steht auf dem Boden, dazwischen eine kurze Flugphase
-  p.y=groundY(p.x,p.z)+S*(-low+0.035*run*Math.abs(c));
+  p.y=groundY(p.x,p.z)+S*(-low+0.035*run*mv*Math.abs(c));
   d.mesh.position.copy(p);
   // Fußaufsatz (Bein ganz vorn): Staub auf Kies
   const step=Math.floor((d.phase-Math.PI/2)/Math.PI);
-  if(step!==Math.floor((prev-Math.PI/2)/Math.PI)){
+  if(moving && step!==Math.floor((prev-Math.PI/2)/Math.PI)){
     const side=(step%2===0?-1:1)*0.08*S, fx=p.x+tg.x*0.7+tg.z*side, fz=p.z+tg.z*0.7-tg.x*side;
     if(v>1.2 && onGravel(fx,fz)) puff(fx,fz,tg,Math.round(2+3*run));
     const dist=camera.position.distanceTo(p);                      // leiser mit Abstand zur Kamera
@@ -884,28 +1052,39 @@ function updateCarl(dt){
   for(const m of carlGlow) m.emissiveIntensity=gl;
 }
 
-// Damhirsch, der Carl nachläuft: gleiche Runde, ein paar Schritte dahinter, gleiches Tempo (folgt dem Regler)
-const chaser={mesh:makeDeer(false), gap:4.6, phase:0, side:0};
+// Damhirsch, der Carl nachläuft: folgt Carls Spur (trail) mit Abstand – damit auf demselben hindernisfreien Weg,
+// egal ob Carl seine Runde läuft oder zu einem Klickziel unterwegs ist
+const chaser={mesh:makeDeer(false), gap:4.6, phase:0, side:0, move:0, pos:new THREE.Vector3(), dir:new THREE.Vector3(0,0,1), want:new THREE.Vector3(0,0,1)};
 chaser.mesh.scale.setScalar(1.2); chaser.mesh.rotation.order='YXZ'; scene.add(chaser.mesh);
+{ // Start: hinter Carl auf der Runde, Spur bis zu ihm vorbelegen
+  const t0=carl.t-chaser.gap/carl.len;
+  for(let i=0;i<=16;i++){ const q=carl.curve.getPointAt((((t0+(carl.t-t0)*i/16)%1)+1)%1); carl.trail.push({x:q.x,z:q.z}); }
+  const f=carl.trail.shift(); chaser.pos.set(f.x,0,f.z); chaser.dir.copy(carl.dir);
+}
 function updateChaser(dt){
-  const d=chaser, S=d.mesh.scale.x, v=carl.speed;
-  const t=((carl.t-d.gap/carl.len)%1+1)%1;
-  const p=carl.curve.getPointAt(t), tg=carl.curve.getTangentAt(t);
-  // auf freiem Gelände seitlich versetzt (von vorn sichtbar), auf Treppe, Sockel und Brücke genau in Carls Spur
-  const open=groundY(p.x,p.z)<=0.3 && groundY(p.x-tg.z*1.9,p.z+tg.x*1.9)<=0.3;
+  const d=chaser, S=d.mesh.scale.x, tr=carl.trail, p=d.pos, tg=d.dir;
+  let len=0, px=p.x, pz=p.z;                                  // Weglänge entlang der Spur bis zu Carl
+  for(const q of tr){ len+=Math.hypot(q.x-px,q.z-pz); px=q.x; pz=q.z; }
+  const v=len>d.gap ? carl.speed*(len>d.gap+1.5?1.3:1) : 0;   // aufschließen, sonst Abstand halten
+  const moving=v>0 && walkPath(p,tr,d.want,Math.min(v*dt,len-d.gap));
+  turnTo(tg,d.want,dt*7);
+  d.move+=((moving?1:0)-d.move)*Math.min(1,dt*6);
+  // auf freiem, ebenem Gelände seitlich versetzt (von vorn sichtbar), sonst genau in Carls Spur
+  const sx=-tg.z, sz=tg.x;
+  const open=groundY(p.x,p.z)<=0.3 && navFree(p.x+sx*1.4,p.z+sz*1.4) && navFree(p.x+sx*2,p.z+sz*2) && groundY(p.x+sx*2,p.z+sz*2)<=0.3;
   d.side+=((open?1.4:0)-d.side)*Math.min(1,dt*2.5);
-  p.x-=tg.z*d.side; p.z+=tg.x*d.side;
+  const x=p.x+sx*d.side, z=p.z+sz*d.side;
   // Höhe und Neigung aus dem Boden unter Vorder- und Hinterläufen (Treppe, Brücke)
-  const r=0.7*S, yf=groundY(p.x+tg.x*r,p.z+tg.z*r), yb=groundY(p.x-tg.x*r,p.z-tg.z*r);
-  d.phase+=v*dt*3.2/S;
-  const trot=Math.min(1,v/3), sw=Math.sin(d.phase)*(0.3+0.3*trot), {legs,neck,head}=d.mesh.userData;
+  const r=0.7*S, yf=groundY(x+tg.x*r,z+tg.z*r), yb=groundY(x-tg.x*r,z-tg.z*r);
+  if(moving) d.phase+=v*dt*3.2/S;
+  const trot=Math.min(1,v/3)*d.move, sw=Math.sin(d.phase)*(0.3+0.3*trot)*d.move, {legs,neck,head}=d.mesh.userData;
   legs[0].rotation.x= sw;  legs[3].rotation.x= sw;   // Diagonalgang
   legs[1].rotation.x=-sw;  legs[2].rotation.x=-sw;
-  d.mesh.position.set(p.x,(yf+yb)/2+Math.abs(Math.cos(d.phase))*0.05*trot,p.z);
+  d.mesh.position.set(x,(yf+yb)/2+Math.abs(Math.cos(d.phase))*0.05*trot,z);
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
-  d.mesh.rotation.x=-Math.atan2(yf-yb,2*r);
-  neck.rotation.x=Math.sin(d.phase*0.5)*0.06+0.25*trot;       // Kopf beim Laufen etwas vorgestreckt
-  head.rotation.x=0.35+Math.sin(d.phase*0.5+1)*0.05;
+  d.mesh.rotation.x+=(-Math.atan2(yf-yb,2*r)-d.mesh.rotation.x)*Math.min(1,dt*10);
+  neck.rotation.x=Math.sin(clock.elapsedTime*1.3)*0.06+0.25*trot;       // Kopf beim Laufen etwas vorgestreckt
+  head.rotation.x=0.35+Math.sin(clock.elapsedTime*1.1+1)*0.05;
 }
 
 // ---------- Himmel / Tag-Nacht ----------
@@ -1086,6 +1265,7 @@ btn('carlBtn',()=>{
     carlHead.copy(carl.mesh.position); carlHead.y=groundY(carlHead.x,carlHead.z)+2.6;
     controls.target.copy(carlHead);
     camera.position.copy(carlHead).addScaledVector(followDir,7.5); camera.position.y+=1.2;
+    resumeLoop();                                              // im Folgemodus läuft Carl wieder seine Runde
   } else if(savedView){ camera.position.copy(savedView.p); controls.target.copy(savedView.t); }
   return follow;
 });
@@ -1099,6 +1279,31 @@ function updateFollow(){
   controls.target.copy(carlHead);
   camera.position.set(carlHead.x+followDir.x*h, carlHead.y+camStep.y, carlHead.z+followDir.z*h);
 }
+
+// Klick (kein Ziehen) auf den Boden: Carl läuft dorthin – nur außerhalb des Folgemodus
+const picker=new THREE.Raycaster(), pickNdc=new THREE.Vector2(), pickPt=new THREE.Vector3();
+function pickGround(cx,cy){                     // Strahl gegen das Höhenfeld groundY marschieren lassen
+  pickNdc.set(cx/innerWidth*2-1,-(cy/innerHeight)*2+1); picker.setFromCamera(pickNdc,camera);
+  const ray=picker.ray; let t0=0;
+  for(let t=0.5;t<400;t+=0.5){
+    ray.at(t,pickPt);
+    if(pickPt.y<=groundY(pickPt.x,pickPt.z)){
+      let a=t0, b=t;
+      for(let i=0;i<10;i++){ const m=(a+b)/2; ray.at(m,pickPt); if(pickPt.y<=groundY(pickPt.x,pickPt.z)) b=m; else a=m; }
+      ray.at(b,pickPt); return pickPt;
+    }
+    t0=t;
+  }
+  return null;
+}
+let pickDown=null;
+renderer.domElement.addEventListener('pointerdown',e=>{ pickDown=e.button===0?{x:e.clientX,y:e.clientY}:null; });
+renderer.domElement.addEventListener('pointerup',e=>{
+  const d=pickDown; pickDown=null;
+  if(!d || follow || Math.hypot(e.clientX-d.x,e.clientY-d.y)>6) return;      // Ziehen = Kamera drehen, kein Klick
+  const hit=pickGround(e.clientX,e.clientY);
+  if(hit) sendCarl(hit.x,hit.z);
+});
 
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
