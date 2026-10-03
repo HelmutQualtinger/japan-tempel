@@ -559,7 +559,7 @@ function updateDeer(dt){
     const sw=Math.sin(d.phase)*0.55, {legs,neck,head}=d.mesh.userData;
     legs[0].rotation.x= sw;  legs[3].rotation.x= sw;   // Diagonalgang
     legs[1].rotation.x=-sw;  legs[2].rotation.x=-sw;
-    d.mesh.position.y=Math.abs(Math.cos(d.phase))*0.03;
+    d.mesh.position.y=groundY(p.x,p.z)+Math.abs(Math.cos(d.phase))*0.03;
     neck.rotation.x=Math.sin(d.phase*0.5)*0.06;
     head.rotation.x=0.35+Math.sin(d.phase*0.5+1)*0.05;
   }
@@ -884,6 +884,30 @@ function updateCarl(dt){
   for(const m of carlGlow) m.emissiveIntensity=gl;
 }
 
+// Damhirsch, der Carl nachläuft: gleiche Runde, ein paar Schritte dahinter, gleiches Tempo (folgt dem Regler)
+const chaser={mesh:makeDeer(false), gap:4.6, phase:0, side:0};
+chaser.mesh.scale.setScalar(1.2); chaser.mesh.rotation.order='YXZ'; scene.add(chaser.mesh);
+function updateChaser(dt){
+  const d=chaser, S=d.mesh.scale.x, v=carl.speed;
+  const t=((carl.t-d.gap/carl.len)%1+1)%1;
+  const p=carl.curve.getPointAt(t), tg=carl.curve.getTangentAt(t);
+  // auf freiem Gelände seitlich versetzt (von vorn sichtbar), auf Treppe, Sockel und Brücke genau in Carls Spur
+  const open=groundY(p.x,p.z)<=0.3 && groundY(p.x-tg.z*1.9,p.z+tg.x*1.9)<=0.3;
+  d.side+=((open?1.4:0)-d.side)*Math.min(1,dt*2.5);
+  p.x-=tg.z*d.side; p.z+=tg.x*d.side;
+  // Höhe und Neigung aus dem Boden unter Vorder- und Hinterläufen (Treppe, Brücke)
+  const r=0.7*S, yf=groundY(p.x+tg.x*r,p.z+tg.z*r), yb=groundY(p.x-tg.x*r,p.z-tg.z*r);
+  d.phase+=v*dt*3.2/S;
+  const trot=Math.min(1,v/3), sw=Math.sin(d.phase)*(0.3+0.3*trot), {legs,neck,head}=d.mesh.userData;
+  legs[0].rotation.x= sw;  legs[3].rotation.x= sw;   // Diagonalgang
+  legs[1].rotation.x=-sw;  legs[2].rotation.x=-sw;
+  d.mesh.position.set(p.x,(yf+yb)/2+Math.abs(Math.cos(d.phase))*0.05*trot,p.z);
+  d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
+  d.mesh.rotation.x=-Math.atan2(yf-yb,2*r);
+  neck.rotation.x=Math.sin(d.phase*0.5)*0.06+0.25*trot;       // Kopf beim Laufen etwas vorgestreckt
+  head.rotation.x=0.35+Math.sin(d.phase*0.5+1)*0.05;
+}
+
 // ---------- Himmel / Tag-Nacht ----------
 let night=false;
 const dayCol=new THREE.Color(0x9fd0ff), nightCol=new THREE.Color(0x1c2a52);
@@ -1085,7 +1109,7 @@ renderer.setAnimationLoop(()=>{
   blend += ((night?1:0)-blend)*0.05;
   rainB += ((raining?1:0)-rainB)*0.03;
   const dt=Math.min(clock.getDelta(),0.05);
-  updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateDust(dt); updateFollow();
+  updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateChaser(dt); updateDust(dt); updateFollow();
   applyLight(blend);
   rain.visible=rainB>0.01;
   if(rain.visible){
