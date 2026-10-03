@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Japanischer Tempel – 3D</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#1a1d2b;font-family:system-ui,sans-serif}
+  canvas{display:block}
+  #hud{position:fixed;left:16px;bottom:16px;color:#fff;background:#0008;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.5;backdrop-filter:blur(4px)}
+  #hud b{font-size:15px}
+  #btns{position:fixed;right:16px;top:16px;display:flex;gap:8px}
+  button{background:#0008;color:#fff;border:1px solid #fff4;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px}
+  button:hover{background:#000b}
+</style>
+</head>
+<body>
+<div id="hud"><b>Japanischer Tempel</b><br>Ziehen: drehen · Scrollen: zoomen · Rechtsklick/Shift: verschieben</div>
+<div id="btns">
+  <button id="rainBtn">Regen</button>
+  <button id="dayBtn">Tag / Nacht</button>
+  <button id="rotBtn">Auto-Rotation</button>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- Szene ----------
+const scene = new THREE.Scene();
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 500);
+camera.position.set(22, 14, 34);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 5, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI/2 - 0.02;
+controls.minDistance = 5;
+controls.maxDistance = 90;
+controls.autoRotateSpeed = 0.6;
+
+// ---------- Licht ----------
+const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x554433, 0.7);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff1d6, 2.2);
+sun.position.set(30, 40, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-45,right:45,top:45,bottom:-45,near:1,far:120});
+scene.add(sun);
+
+// ---------- Materialien ----------
+// ---------- Prozedurale Texturen (Canvas, keine externen Dateien) ----------
+let tseed=11; const trnd=()=>(tseed=(tseed*16807)%2147483647)/2147483647;
+function canvasTex(size, draw, rep=[1,1]){
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  const ctx=c.getContext('2d'); draw(ctx,size);
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rep[0],rep[1]);
+  t.colorSpace=THREE.SRGBColorSpace; t.anisotropy=8;
+  return t;
+}
+const speckle=(ctx,s,n,cols,r0,r1,a=1)=>{
+  ctx.globalAlpha=a;
+  for(let i=0;i<n;i++){
+    ctx.fillStyle=cols[(trnd()*cols.length)|0];
+    const r=r0+trnd()*(r1-r0);
+    ctx.beginPath(); ctx.arc(trnd()*s,trnd()*s,r,0,7); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+};
+// Holzmaserung (senkrecht), nahtlos über x-Wrap
+function woodDraw(base,light,dark){
+  return (ctx,s)=>{
+    ctx.fillStyle=base; ctx.fillRect(0,0,s,s);
+    for(let i=0;i<140;i++){
+      const x=trnd()*s, w=0.5+trnd()*2.5, wob=trnd()*6, ph=trnd()*6;
+      ctx.strokeStyle=trnd()<.5?light:dark; ctx.globalAlpha=0.08+trnd()*0.22; ctx.lineWidth=w;
+      ctx.beginPath();
+      for(let y=0;y<=s;y+=8){ const xx=x+Math.sin(y/s*6.28+ph)*wob; y?ctx.lineTo(xx,y):ctx.moveTo(xx,y); }
+      ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+  };
+}
+const T = {
+  wood: canvasTex(256, woodDraw('#8b2e1f','#b04a32','#4a140c')),
+  dark: canvasTex(256, woodDraw('#3a281d','#5c4130','#1c110b')),
+  stone: canvasTex(512,(ctx,s)=>{
+    ctx.fillStyle='#8e8c85'; ctx.fillRect(0,0,s,s);
+    const rows=4, bh=s/rows;
+    for(let r=0;r<rows;r++){
+      const off=(r%2)*s/4;
+      for(let c=-1;c<3;c++){
+        const x=c*s/2+off, shade=120+trnd()*50;
+        ctx.fillStyle=`rgb(${shade},${shade-2},${shade-8})`;
+        ctx.fillRect(x+3,r*bh+3,s/2-6,bh-6);
+      }
+    }
+    speckle(ctx,s,2200,['#6d6b66','#b3b0a6','#7c7a73','#a09d92'],0.6,2.4,0.55);
+    ctx.strokeStyle='#4f4d49'; ctx.lineWidth=4;
+    for(let r=0;r<=rows;r++){ ctx.beginPath(); ctx.moveTo(0,r*bh); ctx.lineTo(s,r*bh); ctx.stroke(); }
+    for(let r=0;r<rows;r++){ const off=(r%2)*s/4;
+      for(let c=-1;c<3;c++){ const x=c*s/2+off; ctx.beginPath(); ctx.moveTo(x,r*bh); ctx.lineTo(x,(r+1)*bh); ctx.stroke(); } }
+  }),
+  gravel: canvasTex(256,(ctx,s)=>{
+    ctx.fillStyle='#cdc4ae'; ctx.fillRect(0,0,s,s);
+    speckle(ctx,s,3500,['#b5ab94','#e6dfcc','#a39a85','#d8d0bb','#8f866f'],0.7,2.2,0.85);
+    // Harkenmuster
+    ctx.strokeStyle='#9a917b'; ctx.globalAlpha=0.35; ctx.lineWidth=1.5;
+    for(let x=6;x<s;x+=12){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,s); ctx.stroke(); }
+    ctx.globalAlpha=1;
+  }),
+  grass: canvasTex(256,(ctx,s)=>{
+    ctx.fillStyle='#4b7a35'; ctx.fillRect(0,0,s,s);
+    speckle(ctx,s,900,['#3f6b2c','#5d9142','#6aa04b','#386226'],2,6,0.35);
+    ctx.lineWidth=1;
+    for(let i=0;i<2600;i++){
+      const x=trnd()*s,y=trnd()*s,l=4+trnd()*7;
+      ctx.strokeStyle=['#2f5a22','#6fa84f','#82b95a','#3f7a2c'][(trnd()*4)|0]; ctx.globalAlpha=0.7;
+      ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+(trnd()-.5)*4,y-l); ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+  },[70,70]),
+  plaster: canvasTex(256,(ctx,s)=>{
+    ctx.fillStyle='#efe6d0'; ctx.fillRect(0,0,s,s);
+    speckle(ctx,s,1800,['#d9cfb6','#fbf5e6','#cfc4a8'],0.5,3,0.35);
+  }),
+  tile: canvasTex(256,(ctx,s)=>{
+    ctx.fillStyle='#2c3138'; ctx.fillRect(0,0,s,s);
+    const n=8, w=s/n;
+    // Ziegelreihen mit halbrunden Kanten
+    for(let r=0;r<n;r++) for(let c=0;c<n;c++){
+      const x=c*w, y=r*w, shade=38+trnd()*22;
+      ctx.fillStyle=`rgb(${shade},${shade+4},${shade+12})`;
+      ctx.fillRect(x+1,y,w-2,w);
+      ctx.strokeStyle='#14171b'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(x+w/2,y+w*0.15,w*0.5,0,Math.PI); ctx.stroke();
+    }
+    ctx.strokeStyle='#14171b'; ctx.lineWidth=2;
+    for(let c=0;c<=n;c++){ ctx.beginPath(); ctx.moveTo(c*w,0); ctx.lineTo(c*w,s); ctx.stroke(); }
+  }),
+  bark: canvasTex(256,(ctx,s)=>{
+    ctx.fillStyle='#5a4030'; ctx.fillRect(0,0,s,s);
+    for(let i=0;i<110;i++){
+      const x=trnd()*s, w=1+trnd()*4;
+      ctx.strokeStyle=trnd()<.6?'#2b1d14':'#7a5b43'; ctx.globalAlpha=0.35+trnd()*0.4; ctx.lineWidth=w;
+      ctx.beginPath(); ctx.moveTo(x,0);
+      for(let y=0;y<=s;y+=16) ctx.lineTo(x+Math.sin(y*0.08+i)*3,y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+  },[2,3]),
+  pine: canvasTex(256,(ctx,s)=>{
+    ctx.fillStyle='#2b6030'; ctx.fillRect(0,0,s,s);
+    speckle(ctx,s,1400,['#1f4a25','#3b7a3d','#173b1c','#4a8a45'],1,4,0.55);
+    ctx.lineWidth=1.5;
+    for(let i=0;i<900;i++){ // Nadelstriche
+      const x=trnd()*s,y=trnd()*s,a=trnd()*6.28;
+      ctx.strokeStyle=['#16381b','#4c8c47'][(trnd()*2)|0]; ctx.globalAlpha=0.6;
+      ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+Math.cos(a)*7,y+Math.sin(a)*7); ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+  },[4,2]),
+  blossom: canvasTex(256,(ctx,s)=>{
+    ctx.fillStyle='#f0a2bb'; ctx.fillRect(0,0,s,s);
+    speckle(ctx,s,1600,['#f7c3d4','#e58aa9','#fde4ec','#d9739a'],1.5,5,0.7);
+  },[3,2]),
+  paper: canvasTex(128,(ctx,s)=>{
+    ctx.fillStyle='#fff0c4'; ctx.fillRect(0,0,s,s);
+    ctx.strokeStyle='#5a3a1a'; ctx.lineWidth=5;
+    ctx.strokeRect(0,0,s,s);
+    ctx.lineWidth=2.5;
+    for(let i=1;i<3;i++){ ctx.beginPath(); ctx.moveTo(i*s/3,0); ctx.lineTo(i*s/3,s); ctx.stroke();
+                          ctx.beginPath(); ctx.moveTo(0,i*s/3); ctx.lineTo(s,i*s/3); ctx.stroke(); }
+  }),
+};
+T.bark.repeat.set(2,3);
+const std=(o)=>new THREE.MeshStandardMaterial(o);
+const M = {
+  wood:  std({map:T.wood, roughness:.6}),                       // roter Lack
+  dark:  std({map:T.dark, roughness:.8}),
+  tile:  std({map:T.tile, bumpMap:T.tile, bumpScale:1.2, roughness:.5, metalness:.15, side:THREE.DoubleSide}),
+  stone: std({map:T.stone, bumpMap:T.stone, bumpScale:1.5, roughness:.95}),
+  plaster:std({map:T.plaster, roughness:.9}),
+  gold:  new THREE.MeshStandardMaterial({color:0xd4a72c, roughness:.3, metalness:.8}),
+  gravel:std({map:T.gravel, roughness:1}),
+  grass: std({map:T.grass, roughness:1}),
+  trunk: std({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1}),
+  leaf:  std({map:T.pine, roughness:1}),
+  sakura:std({map:T.blossom, roughness:1}),
+  water: new THREE.MeshStandardMaterial({color:0x3b7a9c, roughness:.1, metalness:.3}),
+  glow:  std({map:T.paper, emissiveMap:T.paper, emissive:0xffa733, emissiveIntensity:0, roughness:.5}),
+};
+// Welt-Maßstab (Einheiten pro Textur-Kachel) für Quader; grain = Maserung längs der langen Kante
+M.wood.userData={tile:2,grain:true}; M.dark.userData={tile:2,grain:true};
+M.stone.userData={tile:2}; M.gravel.userData={tile:4}; M.plaster.userData={tile:3};
+M.glow.userData={tile:0.5};
+const glowMats = [M.glow];
+// Zylinder (Pfeiler, Stützen): eigene Kopien mit passender Wiederholung
+const cloneTex=(t,rx,ry)=>{ const c=t.clone(); c.needsUpdate=true; c.repeat.set(rx,ry); return c; };
+M.woodC=std({map:cloneTex(T.wood,2,2), roughness:.6});
+M.darkC=std({map:cloneTex(T.dark,2,2), roughness:.8});
+
+function mesh(geo, mat, x=0,y=0,z=0, shadow=true){
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x,y,z);
+  m.castShadow = shadow; m.receiveShadow = true;
+  return m;
+}
+// Quader: UVs auf Weltmaßstab skalieren, damit Texturen auf jeder Größe gleich dicht bleiben
+function box(w,h,d,mat,x,y,z){
+  const g=new THREE.BoxGeometry(w,h,d), t=mat.userData.tile;
+  if(t){
+    const uv=g.attributes.uv, dims=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];
+    dims.forEach(([a,b],f)=>{
+      const sw=mat.userData.grain && a>b;
+      for(let i=0;i<4;i++){
+        const k=f*4+i; let u=uv.getX(k), v=uv.getY(k);
+        if(sw){ [u,v]=[v,u]; uv.setXY(k,u*b/t,v*a/t); } else uv.setXY(k,u*a/t,v*b/t);
+      }
+    });
+  }
+  return mesh(g,mat,x,y,z);
+}
+const cyl = (rt,rb,h,mat,x,y,z,seg=16)=>mesh(new THREE.CylinderGeometry(rt,rb,h,seg),mat===M.wood?M.woodC:mat===M.dark?M.darkC:mat,x,y,z);
+
+// ---------- Boden ----------
+scene.add(mesh(new THREE.CircleGeometry(120,64).rotateX(-Math.PI/2), M.grass, 0,0,0,false));
+const yard = box(46,0.2,46,M.gravel,0,0.1,0); yard.castShadow=false; scene.add(yard);
+
+// Pfad zum Tempel
+const path = box(4,0.25,30,M.stone,0,0.125,30); path.castShadow=false; scene.add(path);
+for(let i=0;i<14;i++){
+  const s = box(3.4,0.05,1.7,M.gravel,0,0.27,16+i*2.1); s.castShadow=false; scene.add(s);
+}
+
+// ---------- Dach (geschwungenes Walmdach mit hochgezogenen Ecken) ----------
+function roofGeometry(w, d, h, lift=0.9, n=36){
+  const pos=[], idx=[], uvs=[];
+  for(let j=0;j<=n;j++) for(let i=0;i<=n;i++){
+    const u=(i/n)*2-1, v=(j/n)*2-1;                // -1..1
+    const m=Math.max(Math.abs(u),Math.abs(v));
+    // Konkaves Profil: steil am First, flach zur Traufe
+    let y = h*Math.pow(1-m,1.7);
+    // Ecken schwingen nach oben
+    y += lift*Math.pow(Math.abs(u*v),1.5);
+    // Traufe leicht anheben
+    y += 0.15*Math.pow(m,6);
+    pos.push(u*w/2, y, v*d/2);
+    uvs.push(i/n*w/2.2, j/n*d/2.2);   // Ziegel in Weltmaßstab
+  }
+  for(let j=0;j<n;j++) for(let i=0;i<n;i++){
+    const a=j*(n+1)+i, b=a+1, c=a+n+1, e=c+1;
+    idx.push(a,c,b, b,c,e);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+function roof(w,d,h,lift){
+  const grp=new THREE.Group();
+  const top = mesh(roofGeometry(w,d,h,lift), M.tile);
+  grp.add(top);
+  // Dachkante (Holzbalken-Rahmen) darunter
+  const rim = box(w*0.98,0.25,d*0.98,M.dark,0,0.05,0);
+  grp.add(rim);
+  // Firstziegel
+  const ridge = box(w*0.12,0.35,d*0.12,M.dark,0,h+0.1,0);
+  grp.add(ridge);
+  return grp;
+}
+
+// ---------- Hauptgebäude (Haupthalle) ----------
+const hall = new THREE.Group();
+// Steinsockel (zwei Stufen)
+hall.add(box(22,0.8,16,M.stone,0,0.5,0));
+hall.add(box(20,0.8,14,M.stone,0,1.3,0));
+// Treppe vorne
+for(let i=0;i<5;i++) hall.add(box(6,0.32,1.2-0.0,M.stone,0,0.16+i*0.32,8.6-i*0.55+ -0.0));
+
+const baseY = 1.7;
+// Wände (Schiebetüren / Shoji)
+hall.add(box(14,3.6,9,M.plaster,0,baseY+1.8,0));
+// Holzpfeiler rundum
+const px=[-7,-3.5,0,3.5,7], pz=[-4.5,4.5];
+for(const x of px) for(const z of pz) hall.add(cyl(0.28,0.3,4.2,M.wood,x,baseY+2.1,z));
+for(const z of [-1.5,1.5]) for(const x of [-7,7]) hall.add(cyl(0.28,0.3,4.2,M.wood,x,baseY+2.1,z));
+// Balken oben
+hall.add(box(14.8,0.4,0.5,M.wood,0,baseY+4.0,4.5));
+hall.add(box(14.8,0.4,0.5,M.wood,0,baseY+4.0,-4.5));
+hall.add(box(0.5,0.4,9.4,M.wood,7,baseY+4.0,0));
+hall.add(box(0.5,0.4,9.4,M.wood,-7,baseY+4.0,0));
+// Shoji-Türen (Front)
+for(let i=-2;i<=2;i++){
+  hall.add(box(2.6,3.0,0.12,M.plaster,i*3.0*0.9,baseY+1.6,4.7));
+  hall.add(box(2.7,0.08,0.14,M.dark,i*3.0*0.9,baseY+1.6,4.72));
+  hall.add(box(0.08,3.0,0.14,M.dark,i*3.0*0.9,baseY+1.6,4.72));
+}
+// Veranda (Engawa)
+hall.add(box(16,0.25,11,M.dark,0,baseY+0.1,0));
+// Geländer vorne
+for(let x=-7.5;x<=7.5;x+=0.75) hall.add(cyl(0.05,0.05,0.9,M.wood,x,baseY+0.7,5.4));
+hall.add(box(15.2,0.1,0.12,M.wood,0,baseY+1.2,5.4));
+
+// Unteres Dach
+const r1 = roof(21,15,3.4,1.1); r1.position.y = baseY+4.2; hall.add(r1);
+// Oberer Aufbau
+hall.add(box(10,2.2,6.5,M.plaster,0,baseY+5.6,0));
+for(const x of [-5,5]) for(const z of [-3.25,3.25]) hall.add(cyl(0.22,0.22,2.4,M.wood,x,baseY+5.6,z));
+const r2 = roof(15,11,3.0,1.0); r2.position.y = baseY+6.6; hall.add(r2);
+// Goldene Ziegel-Ornamente
+const orn = mesh(new THREE.ConeGeometry(0.28,0.9,10),M.gold,0,baseY+6.6+3.0+0.65,0); hall.add(orn);
+for(const sx of [-1,1]){
+  const sh = mesh(new THREE.SphereGeometry(0.35,12,12),M.gold,sx*1.0,baseY+6.6+3.05,0); sh.scale.set(1,1.2,1); hall.add(sh);
+}
+// Laternen unter dem Dachvorsprung
+for(const x of [-6,-2,2,6]){
+  const l=mesh(new THREE.SphereGeometry(0.35,16,16),M.glow,x,baseY+3.3,5.9); l.scale.y=1.3; hall.add(l);
+  hall.add(cyl(0.01,0.01,0.8,M.dark,x,baseY+3.9,5.9,4));
+}
+hall.position.set(0,0,-8);
+scene.add(hall);
+
+// ---------- Pagode (5 Stockwerke) ----------
+function pagoda(){
+  const g=new THREE.Group();
+  g.add(box(7,0.6,7,M.stone,0,0.3,0));
+  let y=0.6, w=5.4;
+  for(let i=0;i<5;i++){
+    const bodyH=2.0;
+    g.add(box(w*0.7,bodyH,w*0.7,M.plaster,0,y+bodyH/2,0));
+    for(const sx of [-1,1]) for(const sz of [-1,1])
+      g.add(cyl(0.16,0.16,bodyH,M.wood,sx*w*0.35,y+bodyH/2,sz*w*0.35));
+    const r = roof(w,w,1.3,0.55); r.position.y=y+bodyH; g.add(r);
+    y += bodyH+0.55; w *= 0.84;
+  }
+  // Spitze (Sorin)
+  g.add(cyl(0.08,0.08,4.2,M.dark,0,y+1.6,0));
+  for(let k=0;k<7;k++){
+    const ring=mesh(new THREE.TorusGeometry(0.45-k*0.04,0.05,8,20),M.gold,0,y+0.4+k*0.42,0);
+    ring.rotation.x=Math.PI/2; g.add(ring);
+  }
+  g.add(mesh(new THREE.SphereGeometry(0.28,12,12),M.gold,0,y+3.9,0));
+  return g;
+}
+const pg=pagoda(); pg.position.set(-26,0,-4); pg.scale.setScalar(1.15); scene.add(pg);
+
+// ---------- Torii ----------
+function torii(scale=1){
+  const g=new THREE.Group();
+  for(const s of [-1,1]){
+    g.add(cyl(0.38,0.45,8.2,M.wood,s*3.2,4.1,0,20));
+    g.add(cyl(0.5,0.5,0.25,M.dark,s*3.2,0.12,0,20));
+  }
+  // Kasagi (obere gebogene Querbalken)
+  const kas = box(10.8,0.55,0.9,M.dark,0,8.4,0);
+  g.add(kas);
+  for(const s of [-1,1]){
+    const tip = box(1.4,0.55,0.9,M.dark,s*5.8,8.7,0); tip.rotation.z=s*0.35; g.add(tip);
+  }
+  g.add(box(10.8,0.1,1.0,M.wood,0,8.8,0));
+  // Nuki (untere Querbalken)
+  g.add(box(8.4,0.4,0.5,M.wood,0,6.9,0));
+  // Mittelschild
+  g.add(box(1.0,1.4,0.3,M.dark,0,7.7,0));
+  g.add(box(0.7,1.0,0.32,M.gold,0,7.7,0));
+  g.scale.setScalar(scale);
+  return g;
+}
+const t1=torii(1); t1.position.set(0,0,42); scene.add(t1);
+const t2=torii(0.7); t2.position.set(0,0,28); scene.add(t2);
+
+// ---------- Steinlaternen (Tōrō) ----------
+function lantern(){
+  const g=new THREE.Group();
+  g.add(box(0.9,0.25,0.9,M.stone,0,0.12,0));
+  g.add(cyl(0.18,0.22,1.4,M.stone,0,0.95,0,8));
+  g.add(box(0.8,0.2,0.8,M.stone,0,1.75,0));
+  const lit=box(0.5,0.55,0.5,M.glow,0,2.1,0); g.add(lit);
+  const cap=mesh(new THREE.ConeGeometry(0.75,0.55,4),M.stone,0,2.65,0); cap.rotation.y=Math.PI/4; g.add(cap);
+  g.add(mesh(new THREE.SphereGeometry(0.12,8,8),M.stone,0,3.0,0));
+  const pl=new THREE.PointLight(0xffb347,0,9,2); pl.position.y=2.1; g.add(pl); g.userData.light=pl;
+  return g;
+}
+const lanterns=[];
+for(let i=0;i<7;i++) for(const s of [-1,1]){
+  const l=lantern(); l.position.set(s*3.4,0,8+i*4.2); scene.add(l); lanterns.push(l);
+}
+for(const s of [-1,1]){ const l=lantern(); l.position.set(s*9,0.8,5); l.scale.setScalar(1.3); scene.add(l); lanterns.push(l); }
+
+// ---------- Teich + Brücke ----------
+const pond = mesh(new THREE.CylinderGeometry(7,7,0.15,48),M.water,16,0.15,12,false);
+pond.scale.z=0.7; scene.add(pond);
+// Steinrand
+const ring = mesh(new THREE.TorusGeometry(7.1,0.35,8,48),M.stone,16,0.2,12);
+ring.rotation.x=Math.PI/2; ring.scale.y=0.7; scene.add(ring);
+// Brücke
+const bridge=new THREE.Group();
+for(let i=0;i<=10;i++){
+  const t=i/10, x=-6+t*12, y=0.4+Math.sin(t*Math.PI)*1.3;
+  bridge.add(box(1.3,0.18,2.0,M.wood,x,y,0));
+}
+for(const sz of [-1,1]) for(let i=0;i<=10;i+=2){
+  const t=i/10, x=-6+t*12, y=0.4+Math.sin(t*Math.PI)*1.3;
+  bridge.add(cyl(0.07,0.07,1.0,M.wood,x,y+0.55,sz*1.0,8));
+}
+bridge.position.set(16,0,12); scene.add(bridge);
+
+// ---------- Bäume ----------
+function pine(h=6){
+  const g=new THREE.Group();
+  g.add(cyl(0.2,0.35,h*0.4,M.trunk,0,h*0.2,0,8));
+  for(let i=0;i<3;i++){
+    const c=mesh(new THREE.ConeGeometry(2.0-i*0.5,h*0.45,10),M.leaf,0,h*0.4+i*h*0.22+h*0.2,0);
+    g.add(c);
+  }
+  return g;
+}
+function sakura(h=5){
+  const g=new THREE.Group();
+  g.add(cyl(0.18,0.32,h*0.6,M.trunk,0,h*0.3,0,8));
+  const offs=[[0,h*0.8,0,2.3],[1.4,h*0.65,0.6,1.6],[-1.3,h*0.7,-0.5,1.7],[0.2,h*0.6,-1.4,1.5]];
+  for(const [x,y,z,r] of offs) g.add(mesh(new THREE.SphereGeometry(r,14,12),M.sakura,x,y,z));
+  return g;
+}
+let seed=7; const rnd=()=> (seed=(seed*16807)%2147483647)/2147483647;
+for(let i=0;i<70;i++){
+  const a=rnd()*Math.PI*2, r=30+rnd()*50;
+  const x=Math.cos(a)*r, z=Math.sin(a)*r;
+  if(Math.abs(x)<8 && z>10) continue;
+  const t = rnd()<0.35 ? sakura(4+rnd()*2) : pine(5+rnd()*5);
+  t.position.set(x,0,z); t.rotation.y=rnd()*6;
+  scene.add(t);
+}
+for(const [x,z] of [[-14,6],[-18,14],[22,-4],[26,-14],[-10,-24],[14,-24]]){
+  const t=sakura(5); t.position.set(x,0,z); scene.add(t);
+}
+
+// ---------- Damhirsche ----------
+const D = {
+  fur:  new THREE.MeshStandardMaterial({color:0xb07a40, roughness:1}),
+  belly:new THREE.MeshStandardMaterial({color:0xefe3cc, roughness:1}),
+  spot: new THREE.MeshStandardMaterial({color:0xfff4e0, roughness:1}),
+  horn: new THREE.MeshStandardMaterial({color:0xd8c9a3, roughness:.8}),
+  hoof: new THREE.MeshStandardMaterial({color:0x201812, roughness:.8}),
+};
+function makeDeer(buck){
+  const g=new THREE.Group();            // blickt nach +Z
+  const body=mesh(new THREE.SphereGeometry(1,16,12),D.fur,0,1.05,0); body.scale.set(0.38,0.4,0.85); g.add(body);
+  const belly=mesh(new THREE.SphereGeometry(1,12,10),D.belly,0,0.88,0); belly.scale.set(0.3,0.25,0.7); g.add(belly);
+  // Flecken
+  for(let i=0;i<22;i++){
+    const a=rnd()*Math.PI*1.3-0.15*Math.PI, z=(rnd()-.5)*1.3;
+    const side=rnd()<.5?-1:1;
+    const s=mesh(new THREE.SphereGeometry(0.05,6,6),D.spot,side*0.37*Math.cos(a)*0.97,1.05+0.38*Math.sin(a)*0.95,z*0.85,false);
+    s.scale.set(1,1,0.4); s.lookAt(s.position.x*3,s.position.y,s.position.z); g.add(s);
+  }
+  // Hals + Kopf
+  const neck=new THREE.Group(); neck.position.set(0,1.2,0.65); g.add(neck);
+  const nk=mesh(new THREE.CylinderGeometry(0.11,0.17,0.65,10),D.fur,0,0.28,0.12); nk.rotation.x=0.45; neck.add(nk);
+  const head=new THREE.Group(); head.position.set(0,0.62,0.27); neck.add(head);
+  const sk=mesh(new THREE.SphereGeometry(1,12,10),D.fur,0,0,0); sk.scale.set(0.13,0.14,0.22); head.add(sk);
+  const sn=mesh(new THREE.CylinderGeometry(0.06,0.08,0.28,10),D.fur,0,-0.06,0.22); sn.rotation.x=Math.PI/2-0.25; head.add(sn);
+  head.add(mesh(new THREE.SphereGeometry(0.045,8,8),D.hoof,0,-0.1,0.35));
+  for(const s of [-1,1]){
+    const ear=mesh(new THREE.ConeGeometry(0.06,0.24,6),D.fur,s*0.15,0.1,-0.06); ear.rotation.z=-s*1.0; ear.rotation.x=-0.3; head.add(ear);
+    head.add(mesh(new THREE.SphereGeometry(0.025,6,6),D.hoof,s*0.1,0.04,0.12));
+    if(buck){
+      const a=new THREE.Group(); a.position.set(s*0.07,0.12,-0.04); a.rotation.set(-0.3,0,-s*0.35);
+      a.add(mesh(new THREE.CylinderGeometry(0.018,0.026,0.5,6),D.horn,0,0.25,0));
+      const palm=mesh(new THREE.BoxGeometry(0.3,0.2,0.025),D.horn,s*0.1,0.55,0.05); palm.rotation.z=-s*0.35; a.add(palm);
+      for(let k=0;k<5;k++){
+        const t=mesh(new THREE.ConeGeometry(0.018,0.14,5),D.horn,s*(0.1+(k-2)*0.06),0.7-Math.abs(k-2)*0.03,0.05); a.add(t);
+      }
+      head.add(a);
+    }
+  }
+  // Schwanz
+  const tail=mesh(new THREE.ConeGeometry(0.06,0.25,6),D.belly,0,1.2,-0.85); tail.rotation.x=-2.4; g.add(tail);
+  // Beine (Hüft-/Schultergelenk als Pivot)
+  const legs=[];
+  for(const [x,z] of [[-.2,.5],[.2,.5],[-.2,-.5],[.2,-.5]]){
+    const p=new THREE.Group(); p.position.set(x,0.95,z);
+    p.add(mesh(new THREE.CylinderGeometry(0.055,0.075,0.5,8),D.fur,0,-0.2,0));
+    p.add(mesh(new THREE.CylinderGeometry(0.035,0.05,0.5,8),D.fur,0,-0.62,0));
+    p.add(mesh(new THREE.CylinderGeometry(0.05,0.055,0.1,8),D.hoof,0,-0.9,0.0));
+    g.add(p); legs.push(p);
+  }
+  g.userData={legs,neck,head};
+  return g;
+}
+const V=(x,z)=>new THREE.Vector3(x,0,z);
+const deerDefs=[
+  {buck:true,  speed:1.5, scale:1.5, t:0.0,  pts:[V(-12,22),V(-6,30),V(-14,38),V(-26,34),V(-28,22),V(-20,20)]},
+  {buck:false, speed:1.2, scale:1.3, t:0.3,  pts:[V(-16,-20),V(0,-20),V(16,-20),V(20,-30),V(0,-33),V(-18,-30)]},
+  {buck:true,  speed:1.8, scale:1.45,t:0.6,  pts:[V(30,2),V(34,14),V(30,28),V(20,32),V(26,20),V(26,8)]},
+];
+const deers=deerDefs.map(def=>{
+  const mesh3=makeDeer(def.buck); mesh3.scale.setScalar(def.scale); scene.add(mesh3);
+  const curve=new THREE.CatmullRomCurve3(def.pts,true,'catmullrom',0.5);
+  return {...def, mesh:mesh3, curve, len:curve.getLength(), phase:rnd()*6};
+});
+const clock=new THREE.Clock();
+function updateDeer(dt){
+  for(const d of deers){
+    d.t=(d.t+d.speed*dt/d.len)%1;
+    const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t);
+    d.mesh.position.copy(p);
+    d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
+    d.phase+=d.speed*dt*3.2/d.mesh.scale.x*1.0;
+    const sw=Math.sin(d.phase)*0.55, {legs,neck,head}=d.mesh.userData;
+    legs[0].rotation.x= sw;  legs[3].rotation.x= sw;   // Diagonalgang
+    legs[1].rotation.x=-sw;  legs[2].rotation.x=-sw;
+    d.mesh.position.y=Math.abs(Math.cos(d.phase))*0.03;
+    neck.rotation.x=Math.sin(d.phase*0.5)*0.06;
+    head.rotation.x=0.35+Math.sin(d.phase*0.5+1)*0.05;
+  }
+}
+
+// ---------- Giraffe ----------
+const G = {
+  fur:  new THREE.MeshStandardMaterial({color:0xe3b04b, roughness:1}),
+  spot: new THREE.MeshStandardMaterial({color:0x8a4b1e, roughness:1}),
+  dark: new THREE.MeshStandardMaterial({color:0x3a2a1c, roughness:1}),
+};
+function makeGiraffe(){
+  const g=new THREE.Group();            // blickt nach +Z
+  const body=mesh(new THREE.SphereGeometry(1,18,14),G.fur,0,2.55,-0.05); body.scale.set(0.5,0.55,1.0); body.rotation.x=-0.12; g.add(body);
+  const patch=(parent,x,y,z,r,nx,ny,nz)=>{
+    const s=mesh(new THREE.SphereGeometry(r,8,8),G.spot,x,y,z,false);
+    s.scale.set(1,1,0.35); s.lookAt(x+nx,y+ny,z+nz); parent.add(s);
+  };
+  for(let i=0;i<46;i++){                // Flecken am Körper
+    const a=rnd()*Math.PI*1.4-0.2*Math.PI, z=(rnd()-.5)*1.7, side=rnd()<.5?-1:1;
+    const c=Math.cos(a), s=Math.sin(a);
+    patch(g, side*0.5*c*0.98, 2.55+0.55*s*0.98, -0.05+z*0.85, 0.09+rnd()*0.07, side*c, s, 0);
+  }
+  // Hals
+  const neck=new THREE.Group(); neck.position.set(0,2.8,0.75); neck.rotation.x=0.38; g.add(neck);
+  neck.add(mesh(new THREE.CylinderGeometry(0.15,0.27,2.5,12),G.fur,0,1.25,0));
+  for(let i=0;i<26;i++){
+    const y=0.15+rnd()*2.2, rr=0.27-(0.12*y/2.5)+0.005, a=rnd()*Math.PI*2;
+    patch(neck, Math.cos(a)*rr, y, Math.sin(a)*rr, 0.06+rnd()*0.04, Math.cos(a), 0, Math.sin(a));
+  }
+  // Mähne (dunkler Streifen im Nacken)
+  neck.add(mesh(new THREE.BoxGeometry(0.05,2.4,0.1),G.dark,0,1.25,-0.22));
+  // Kopf
+  const head=new THREE.Group(); head.position.set(0,2.55,0.05); head.rotation.x=0.95; neck.add(head);
+  const sk=mesh(new THREE.SphereGeometry(1,12,10),G.fur,0,0.05,0); sk.scale.set(0.17,0.2,0.34); head.add(sk);
+  const sn=mesh(new THREE.CylinderGeometry(0.1,0.12,0.4,10),G.fur,0,-0.08,0.3); sn.rotation.x=Math.PI/2; head.add(sn);
+  head.add(mesh(new THREE.SphereGeometry(0.075,8,8),G.dark,0,-0.08,0.5));
+  for(const s of [-1,1]){
+    const horn=new THREE.Group(); horn.position.set(s*0.09,0.2,-0.05); horn.rotation.x=-0.25; head.add(horn);
+    horn.add(mesh(new THREE.CylinderGeometry(0.03,0.04,0.3,8),G.fur,0,0.15,0));
+    horn.add(mesh(new THREE.SphereGeometry(0.055,8,8),G.dark,0,0.32,0));
+    const ear=mesh(new THREE.ConeGeometry(0.06,0.25,6),G.fur,s*0.2,0.08,-0.12); ear.rotation.z=-s*1.3; head.add(ear);
+    head.add(mesh(new THREE.SphereGeometry(0.04,8,8),G.dark,s*0.15,0.09,0.12));
+  }
+  // Schwanz
+  const tail=mesh(new THREE.CylinderGeometry(0.02,0.04,1.1,6),G.fur,0,2.2,-1.15); tail.rotation.x=0.25; g.add(tail);
+  g.add(mesh(new THREE.SphereGeometry(0.07,8,8),G.dark,0,1.62,-1.28));
+  // Beine (Passgang)
+  const legs=[];
+  for(const [x,z,len] of [[-.25,.62,1.0],[.25,.62,1.0],[-.25,-.7,0.95],[.25,-.7,0.95]]){
+    const p=new THREE.Group(); p.position.set(x,2.2,z);
+    p.add(mesh(new THREE.CylinderGeometry(0.08,0.12,1.05,8),G.fur,0,-0.5,0));
+    p.add(mesh(new THREE.CylinderGeometry(0.06,0.08,1.0,8),G.fur,0,-1.5,0));
+    p.add(mesh(new THREE.SphereGeometry(0.09,8,8),G.spot,0,-1.0,0.0));
+    p.add(mesh(new THREE.CylinderGeometry(0.08,0.09,0.12,8),G.dark,0,-2.05,0.02));
+    g.add(p); legs.push(p);
+  }
+  g.userData={legs,neck,head};
+  return g;
+}
+const giraffe={
+  mesh:makeGiraffe(), speed:1.8, t:0.1, phase:0,
+  curve:new THREE.CatmullRomCurve3([V(34,-6),V(40,-18),V(30,-30),V(24,-22),V(30,-14)],true,'catmullrom',0.5),
+};
+giraffe.len=giraffe.curve.getLength(); giraffe.mesh.scale.setScalar(2.0); scene.add(giraffe.mesh);
+function updateGiraffe(dt){
+  const d=giraffe;
+  d.t=(d.t+d.speed*dt/d.len)%1;
+  const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t);
+  d.mesh.position.copy(p);
+  d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
+  d.phase+=d.speed*dt*1.5;
+  const sw=Math.sin(d.phase)*0.35, {legs,neck,head}=d.mesh.userData;
+  legs[0].rotation.x=sw; legs[2].rotation.x=sw;
+  legs[1].rotation.x=-sw; legs[3].rotation.x=-sw;
+  d.mesh.rotation.z=Math.sin(d.phase)*0.015;
+  neck.rotation.x=0.38+Math.sin(d.phase)*0.05;
+  head.rotation.x=0.95+Math.sin(d.phase+1)*0.06;
+}
+
+// ---------- Himmel / Tag-Nacht ----------
+let night=false;
+const dayCol=new THREE.Color(0x9fd0ff), nightCol=new THREE.Color(0x1c2a52);
+scene.background=dayCol.clone(); scene.fog=new THREE.Fog(dayCol,70,170);
+let blend=0;  // 0=Tag, 1=Nacht
+function applyLight(b){
+  scene.background.copy(dayCol).lerp(nightCol,b);
+  scene.background.lerp(grayCol.clone().multiplyScalar(1-0.75*b),rainB*0.85);
+  scene.fog.color.copy(scene.background);
+  scene.fog.near=70-45*rainB; scene.fog.far=170-90*rainB;
+  hemi.intensity=(0.7-0.25*b)*(1-0.3*rainB);
+  sun.intensity=(2.2-1.5*b)*(1-0.7*rainB);
+  sun.color.set(b>0.5?0x8fa8ff:0xfff1d6);
+  M.glow.emissiveIntensity=b*1.6;
+  for(const l of lanterns) l.userData.light.intensity=b*14;
+}
+// ---------- Regen ----------
+const RAIN_N=8000, RAIN_BOX=120, RAIN_H=60;
+const rainPos=new Float32Array(RAIN_N*6), rainVel=new Float32Array(RAIN_N);
+for(let i=0;i<RAIN_N;i++){
+  const x=(rnd()-.5)*RAIN_BOX, y=rnd()*RAIN_H, z=(rnd()-.5)*RAIN_BOX;
+  rainVel[i]=0.7+rnd()*0.5;
+  rainPos.set([x,y,z,x,y+0.9,z],i*6);
+}
+const rainGeo=new THREE.BufferGeometry();
+rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPos,3));
+const rainMat=new THREE.LineBasicMaterial({color:0xaec6e0,transparent:true,opacity:0});
+const rain=new THREE.LineSegments(rainGeo,rainMat);
+rain.frustumCulled=false; rain.visible=false; scene.add(rain);
+let raining=false, rainB=0;
+const grayCol=new THREE.Color(0x6b7482);
+document.getElementById('rainBtn').onclick=()=>{ raining=!raining; };
+
+document.getElementById('dayBtn').onclick=()=>{ night=!night; };
+document.getElementById('rotBtn').onclick=()=>{ controls.autoRotate=!controls.autoRotate; };
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+renderer.setAnimationLoop(()=>{
+  blend += ((night?1:0)-blend)*0.05;
+  rainB += ((raining?1:0)-rainB)*0.03;
+  const dt=Math.min(clock.getDelta(),0.05);
+  updateDeer(dt); updateGiraffe(dt);
+  applyLight(blend);
+  rain.visible=rainB>0.01;
+  if(rain.visible){
+    rainMat.opacity=0.55*rainB;
+    const p=rainPos;
+    for(let i=0;i<RAIN_N;i++){
+      const o=i*6, dy=rainVel[i]*1.1;
+      p[o+1]-=dy; p[o+4]-=dy;
+      p[o]-=0.04; p[o+3]-=0.04;
+      if(p[o+1]<0){ const y=RAIN_H; p[o+1]=y; p[o+4]=y+0.9; }
+    }
+    rainGeo.attributes.position.needsUpdate=true;
+  }
+  controls.update();
+  renderer.render(scene,camera);
+});
+</script>
+</body>
+</html>
