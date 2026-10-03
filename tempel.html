@@ -13,6 +13,8 @@
   #hud h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.01em}
   #hud p{margin:4px 0 0;font-size:12px;line-height:1.45;color:rgba(255,255,255,.75)}
   #btns{left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:6px;padding:6px;max-width:calc(100vw - 32px);box-sizing:border-box}
+  #speed{display:flex;align-items:center;gap:8px;padding:0 10px;font-size:13px;white-space:nowrap}
+  #speed input{width:110px;accent-color:var(--accent);cursor:pointer}
   button{flex:1 1 auto;white-space:nowrap;background:transparent;color:#fff;border:1px solid transparent;border-radius:8px;padding:9px 14px;cursor:pointer;font:inherit;font-size:13px;transition:background .15s,border-color .15s,color .15s}
   button:hover{background:rgba(255,255,255,.12)}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -22,6 +24,8 @@
     #hud p{display:none}
     #btns{bottom:10px;flex-wrap:wrap;width:calc(100vw - 20px);max-width:none}
     button{flex:1 1 30%;padding:10px 8px}
+    #speed{flex:1 1 100%;order:9;padding:6px 10px}
+    #speed input{flex:1;width:auto}
   }
 </style>
 </head>
@@ -29,6 +33,7 @@
 <div id="hud"><h1>Japanischer Tempel</h1><p>Ziehen: drehen · Scrollen: zoomen · Rechtsklick/Shift: verschieben</p></div>
 <div id="btns">
   <button id="carlBtn" aria-pressed="false">Carl folgen</button>
+  <label id="speed" title="Carls Tempo"><span>Tempo</span><input id="speedIn" type="range" min="0" max="7" step="0.1" value="3.2" aria-label="Carls Tempo"></label>
   <button id="rainBtn" aria-pressed="false">Regen</button>
   <button id="dayBtn" aria-pressed="false">Nacht</button>
   <button id="rotBtn" aria-pressed="false">Auto-Rotation</button>
@@ -759,8 +764,7 @@ for(let i=0;i<60;i++){
   sp.visible=false; sp.userData={life:0,max:1,vel:new THREE.Vector3(),size:1}; scene.add(sp); dust.push(sp);
 }
 const onGravel=(x,z)=>groundY(x,z)===0.2;
-function puff(x,z,dir){
-  const n=5;
+function puff(x,z,dir,n=5){
   for(let k=0;k<n;k++){
     const sp=dust[dustI=(dustI+1)%dust.length], u=sp.userData;
     sp.position.set(x+(Math.random()-.5)*0.3,0.3,z+(Math.random()-.5)*0.3);
@@ -786,31 +790,34 @@ function updateCarl(dt){
   d.t=(d.t+d.speed*dt/d.len)%1;
   const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t);
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
-  const prev=d.phase;
-  d.phase+=d.speed*dt*1.37;                    // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
-  const s=Math.sin(d.phase), c=Math.cos(d.phase), A=0.62;
-  // Joggen: Bein 0 schwingt mit s nach vorn, Bein 1 gegengleich; das vorschwingende Bein winkelt stark an
-  const a=[A*s,-A*s], kn=[0.2+1.25*Math.max(0,c)+0.35*Math.max(0,-s), 0.2+1.25*Math.max(0,-c)+0.35*Math.max(0,s)];
+  const prev=d.phase, v=d.speed, run=Math.min(1,Math.max(0,(v-1)/2.2));   // 0 = Gehen, 1 = Joggen (Regler)
+  const A=0.34+0.28*run;                                                  // Schwungweite der Beine
+  d.phase+=v*dt*Math.PI/(2*0.78*Math.sin(A)*S*(1+0.265*run));             // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
+  const s=Math.sin(d.phase), c=Math.cos(d.phase);
+  // Bein 0 schwingt mit s nach vorn, Bein 1 gegengleich; das vorschwingende Bein winkelt an (beim Joggen stark)
+  const kb=0.7+0.55*run, kick=0.35*run;
+  const a=[A*s,-A*s], kn=[0.12+0.08*run+kb*Math.max(0,c)+kick*Math.max(0,-s), 0.12+0.08*run+kb*Math.max(0,-c)+kick*Math.max(0,s)];
   let low=Infinity;
   for(let i=0;i<2;i++){
     legs[i].rotation.x=-a[i]; knees[i].rotation.x=kn[i];
     const f=a[i]-kn[i], sf=Math.sin(f);            // Unterschenkelwinkel; Sohle reicht von der Ferse (-0.07) bis zur Spitze (+0.16)
     low=Math.min(low,0.78-0.36*Math.cos(a[i])-0.42*Math.cos(f)+Math.min(0.16*sf,-0.07*sf));
   }
-  arms[0].rotation.x=A*s*1.1; arms[1].rotation.x=-A*s*1.1;       // Arme gegengleich, Ellbogen angewinkelt
-  elbows[0].rotation.x=-1.35-0.25*s; elbows[1].rotation.x=-1.35+0.25*s;
-  body.position.y=0; body.rotation.x=0.16; body.rotation.y=s*0.14;
-  head.rotation.x=-0.1;
-  head.rotation.y=-s*0.14+Math.sin(d.phase*0.17)*0.2;        // schaut sich um
+  const arm=A*(0.8+0.3*run), eb=0.3+1.05*run;                   // Arme gegengleich, Ellbogen beim Joggen angewinkelt
+  arms[0].rotation.x=arm*s; arms[1].rotation.x=-arm*s;
+  elbows[0].rotation.x=-eb-0.25*s; elbows[1].rotation.x=-eb+0.25*s;
+  body.position.y=0; body.rotation.x=0.04+0.12*run; body.rotation.y=s*(0.08+0.06*run);
+  head.rotation.x=-0.1*run;
+  head.rotation.y=-s*(0.08+0.06*run)+Math.sin(d.phase*0.17)*0.2;        // schaut sich um
   head.rotation.z=Math.sin(d.phase*0.23)*0.04;
   // tiefster Fuß steht auf dem Boden, dazwischen eine kurze Flugphase
-  p.y=groundY(p.x,p.z)+S*(-low+0.035*Math.abs(c));
+  p.y=groundY(p.x,p.z)+S*(-low+0.035*run*Math.abs(c));
   d.mesh.position.copy(p);
   // Fußaufsatz (Bein ganz vorn): Staub auf Kies
   const step=Math.floor((d.phase-Math.PI/2)/Math.PI);
   if(step!==Math.floor((prev-Math.PI/2)/Math.PI)){
     const side=(step%2===0?-1:1)*0.08*S, fx=p.x+tg.x*0.7+tg.z*side, fz=p.z+tg.z*0.7-tg.x*side;
-    if(onGravel(fx,fz)) puff(fx,fz,tg);
+    if(v>1.2 && onGravel(fx,fz)) puff(fx,fz,tg,Math.round(2+3*run));
   }
   const gl=0.34*(1-0.72*blend)*(1-0.35*rainB);
   for(const m of carlGlow) m.emissiveIntensity=gl;
@@ -980,6 +987,7 @@ function startMusic(){
   },150);
   return {stop(){ clearInterval(timer); out.gain.cancelScheduledValues(ac.currentTime); out.gain.setTargetAtTime(0,ac.currentTime,0.25); setTimeout(()=>ac.close(),1500); }};
 }
+document.getElementById('speedIn').oninput=e=>{ carl.speed=+e.target.value; };
 btn('musicBtn',()=>{ if(music){ music.stop(); music=null; } else music=startMusic(); return !!music; });
 
 // Carl folgen: Kamera bleibt immer vor Carl und schaut ihm ins Gesicht; Zoom und Höhe bleiben frei, beim Ausschalten zurück zur vorherigen Ansicht
