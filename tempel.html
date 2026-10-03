@@ -608,6 +608,26 @@ function updateGiraffe(dt){
   head.rotation.x=0.95+Math.sin(d.phase+1)*0.06;
 }
 
+// ---------- Carl (Foto-Billboard) ----------
+const carlTex=new THREE.TextureLoader().load('carl.png'); carlTex.colorSpace=THREE.SRGBColorSpace;
+const carlMat=new THREE.MeshBasicMaterial({map:carlTex,transparent:true,alphaTest:0.5,side:THREE.DoubleSide});
+const carl={
+  mesh:new THREE.Group(), speed:1.6, t:0, phase:0,
+  curve:new THREE.CatmullRomCurve3([V(-6,8),V(2,14),V(4,22),V(-4,26),V(-10,18)],true,'catmullrom',0.5),
+};
+const carlPic=new THREE.Mesh(new THREE.PlaneGeometry(1.0,2.0),carlMat); carlPic.position.y=1.0;
+carl.mesh.add(carlPic); scene.add(carl.mesh);
+carl.len=carl.curve.getLength();
+function updateCarl(dt){
+  const d=carl;
+  d.t=(d.t+d.speed*dt/d.len)%1;
+  d.mesh.position.copy(d.curve.getPointAt(d.t));
+  d.phase+=d.speed*dt*3;
+  d.mesh.rotation.y=Math.atan2(camera.position.x-d.mesh.position.x,camera.position.z-d.mesh.position.z); // zur Kamera drehen
+  carlPic.position.y=1.0+Math.abs(Math.sin(d.phase))*0.08;
+  carlPic.rotation.z=Math.sin(d.phase)*0.05;
+}
+
 // ---------- Himmel / Tag-Nacht ----------
 let night=false;
 const dayCol=new THREE.Color(0x9fd0ff), nightCol=new THREE.Color(0x1c2a52);
@@ -653,7 +673,7 @@ renderer.setAnimationLoop(()=>{
   blend += ((night?1:0)-blend)*0.05;
   rainB += ((raining?1:0)-rainB)*0.03;
   const dt=Math.min(clock.getDelta(),0.05);
-  updateDeer(dt); updateGiraffe(dt);
+  updateDeer(dt); updateGiraffe(dt); updateCarl(dt);
   applyLight(blend);
   rain.visible=rainB>0.01;
   if(rain.visible){
