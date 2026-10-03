@@ -896,25 +896,29 @@ function startMusic(){
 }
 btn('musicBtn',()=>{ if(music){ music.stop(); music=null; } else music=startMusic(); return !!music; });
 
-// Carl folgen: Kamera rückt nah heran und wandert mit; beim Ausschalten zurück zur vorherigen Ansicht
+// Carl folgen: Kamera bleibt immer vor Carl und schaut ihm ins Gesicht; Zoom und Höhe bleiben frei, beim Ausschalten zurück zur vorherigen Ansicht
 let follow=false, savedView=null;
-const carlHead=new THREE.Vector3(), camStep=new THREE.Vector3();
+const carlHead=new THREE.Vector3(), camStep=new THREE.Vector3(), followDir=new THREE.Vector3();
 btn('carlBtn',()=>{
   follow=!follow;
   if(follow){
     savedView={p:camera.position.clone(), t:controls.target.clone()};
-    carl.mesh.getWorldDirection(camStep);                       // vor Carl stellen, leicht seitlich und erhöht
+    carl.mesh.getWorldDirection(followDir);
     carlHead.copy(carl.mesh.position); carlHead.y=bridgeY(carlHead.x,carlHead.z)+2.6;
     controls.target.copy(carlHead);
-    camera.position.copy(carlHead).addScaledVector(camStep,7).add(new THREE.Vector3(camStep.z*2.5,1.2,-camStep.x*2.5));
+    camera.position.copy(carlHead).addScaledVector(followDir,7.5); camera.position.y+=1.2;
   } else if(savedView){ camera.position.copy(savedView.p); controls.target.copy(savedView.t); }
   return follow;
 });
 function updateFollow(){
   if(!follow) return;
   carlHead.copy(carl.mesh.position); carlHead.y=bridgeY(carlHead.x,carlHead.z)+2.6;
-  camStep.subVectors(carlHead,controls.target);
-  camera.position.add(camStep); controls.target.add(camStep);
+  carl.mesh.getWorldDirection(camStep);
+  followDir.lerp(camStep,0.06).setY(0).normalize();            // in Kurven weich mitschwenken
+  camStep.subVectors(camera.position,controls.target);         // Abstand (Zoom) und Höhe des Nutzers beibehalten
+  const h=Math.hypot(camStep.x,camStep.z);
+  controls.target.copy(carlHead);
+  camera.position.set(carlHead.x+followDir.x*h, carlHead.y+camStep.y, carlHead.z+followDir.z*h);
 }
 
 addEventListener('resize',()=>{
