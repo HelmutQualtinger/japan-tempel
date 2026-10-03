@@ -774,6 +774,58 @@ function updateGiraffe(dt){
   head.rotation.x=0.95+Math.sin(d.phase+1)*0.06;
 }
 
+// ---------- Drohne (Quadrocopter, kreist über dem Tempel) ----------
+function makeDrone(){
+  const g=new THREE.Group();            // blickt nach +Z
+  const shell=new THREE.MeshStandardMaterial({color:0xe9ecef,roughness:.45,metalness:.2});
+  const dark=new THREE.MeshStandardMaterial({color:0x1b1d21,roughness:.6});
+  const blur=new THREE.MeshBasicMaterial({color:0x22262b,transparent:true,opacity:.22,side:THREE.DoubleSide,depthWrite:false});
+  const led=c=>new THREE.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:2});
+  const front=led(0x35ff6a), rear=led(0xff2a2a);
+  const body=mesh(new THREE.SphereGeometry(1,20,14),shell,0,0,0); body.scale.set(0.26,0.11,0.42); g.add(body);
+  g.add(mesh(new THREE.BoxGeometry(0.30,0.05,0.40),dark,0,-0.085,0));                       // Akku
+  // Kamera-Gimbal vorn unten
+  g.add(mesh(new THREE.BoxGeometry(0.10,0.07,0.08),dark,0,-0.13,0.30));
+  const cam=mesh(new THREE.SphereGeometry(0.075,14,10),dark,0,-0.20,0.33); g.add(cam);
+  const lens=mesh(new THREE.CylinderGeometry(0.035,0.035,0.03,12),new THREE.MeshStandardMaterial({color:0x0a1626,roughness:.1,metalness:.8}),0,-0.215,0.395);
+  lens.rotation.x=Math.PI/2-0.35; g.add(lens);
+  const rotors=[];
+  for(const sx of [-1,1]) for(const sz of [-1,1]){
+    const ax=sx*0.52, az=sz*0.50;
+    const arm=mesh(new THREE.BoxGeometry(0.06,0.045,0.72),shell,ax/2,0.0,az/2); arm.rotation.y=Math.atan2(ax,az); g.add(arm);
+    g.add(mesh(new THREE.CylinderGeometry(0.055,0.065,0.11,12),dark,ax,0.045,az));           // Motor
+    const r=new THREE.Group(); r.position.set(ax,0.115,az);
+    r.add(mesh(new THREE.BoxGeometry(0.62,0.008,0.05),dark));                                // Rotorblatt
+    const disc=new THREE.Mesh(new THREE.CircleGeometry(0.31,24).rotateX(-Math.PI/2),blur); r.add(disc);   // Bewegungsunschärfe
+    g.add(r); rotors.push(r);
+    g.add(mesh(new THREE.CylinderGeometry(0.012,0.012,0.20,6),dark,ax,-0.10,az));            // Landebein
+    g.add(mesh(new THREE.SphereGeometry(0.03,8,6),sz>0?front:rear,ax,-0.02,az+sz*0.07));     // Positionslicht: vorn grün, hinten rot
+  }
+  g.userData={rotors,front,rear};
+  return g;
+}
+const drone={
+  mesh:makeDrone(), speed:5.5, t:0,
+  curve:new THREE.CatmullRomCurve3([[15,14.5,2],[12,16,-14],[-2,17,-19],[-15,15.5,-10],[-14,14,6],[-3,13,15],[9,13.5,13]].map(p=>new THREE.Vector3(...p)),true,'catmullrom',0.5),
+  bank:0,
+};
+drone.len=drone.curve.getLength(); drone.mesh.scale.setScalar(1.6); drone.mesh.rotation.order='YXZ'; scene.add(drone.mesh);
+const droneA=new THREE.Vector3(), droneB=new THREE.Vector3();
+function updateDrone(dt){
+  const d=drone, time=clock.elapsedTime;
+  d.t=(d.t+d.speed*dt/d.len)%1;
+  const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t,droneA), ahead=d.curve.getTangentAt((d.t+0.012)%1,droneB);
+  d.mesh.position.copy(p); d.mesh.position.y+=Math.sin(time*1.7)*0.12;                      // leichtes Schweben
+  d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
+  const turn=tg.x*ahead.z-tg.z*ahead.x;                                                      // Kurvenrichtung -> in die Kurve legen
+  d.bank+=(Math.max(-0.5,Math.min(0.5,turn*3.5))-d.bank)*Math.min(1,dt*3);
+  d.mesh.rotation.z=d.bank; d.mesh.rotation.x=0.16+tg.y*-0.6;                                // Nase im Vorwärtsflug gesenkt
+  const {rotors,front,rear}=d.mesh.userData;
+  rotors.forEach((r,i)=>{ r.rotation.y+=(i%3===0?1:-1)*dt*70; });
+  const blink=(time%1.2)<0.12 ? 3.5 : 0.25;                                                  // Blitzlicht
+  front.emissiveIntensity=1.6+blink*0.3; rear.emissiveIntensity=blink;
+}
+
 // ---------- Carl (3D-Figur, Gesicht aus Foto) ----------
 const CARL={skin:0xe2bab8, knit:'#aaa392', jeans:0x7d9cc4};
 const carlGlow=[];   // Kopf-Materialien: leichte Eigenhelligkeit, damit das Gesicht wie auf dem Foto wirkt
@@ -1451,7 +1503,7 @@ renderer.setAnimationLoop(()=>{
   blend += ((night?1:0)-blend)*0.05;
   rainB += ((raining?1:0)-rainB)*0.03;
   const dt=Math.min(clock.getDelta(),0.05);
-  updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateChaser(dt); updateDust(dt); updateFollow();
+  updateDeer(dt); updateGiraffe(dt); updateDrone(dt); updateCarl(dt); updateChaser(dt); updateDust(dt); updateFollow();
   applyLight(blend);
   rain.visible=rainB>0.01;
   if(rain.visible){
