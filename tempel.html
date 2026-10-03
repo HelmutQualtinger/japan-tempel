@@ -627,7 +627,7 @@ function updateGiraffe(dt){
 }
 
 // ---------- Carl (3D-Figur, Gesicht aus Foto) ----------
-const CARL={skin:0xe2bab8, hair:0x6a4530, knit:'#aaa392', jeans:0x7d9cc4};
+const CARL={skin:0xe2bab8, knit:'#aaa392', jeans:0x7d9cc4};
 const carlGlow=[];   // Kopf-Materialien: leichte Eigenhelligkeit, damit das Gesicht wie auf dem Foto wirkt
 function makeCarl(){
   const g=new THREE.Group();            // blickt nach +Z, linke Körperseite = +X
@@ -676,13 +676,18 @@ function makeCarl(){
   const head=new THREE.Group(); head.position.y=1.55; body.add(head);
   const R=[0.165,0.205,0.172];
   const headTex=ctex(256,128,(c,w,h)=>{
-    c.fillStyle='#6a4530'; c.fillRect(0,0,w,h);
+    const hg=c.createLinearGradient(0,0,0,h*.6); hg.addColorStop(0,'#2e1813'); hg.addColorStop(1,'#5a3c30');   // Haarfarbe aus dem Foto: Scheitel dunkel, Seiten wärmer
+    c.fillStyle=hg; c.fillRect(0,0,w,h);
     const gr=c.createLinearGradient(0,h*.36,0,h*.46); gr.addColorStop(0,'rgba(226,186,184,0)'); gr.addColorStop(1,'rgba(226,186,184,1)');
     c.fillStyle=gr; c.fillRect(w*.02,h*.36,w*.46,h*.64);     // vorne (u≈0.25) unten: Haut
   });
   const headM=new THREE.MeshStandardMaterial({map:headTex,roughness:.95,emissive:0xffffff,emissiveMap:headTex});
   const hs=mesh(new THREE.SphereGeometry(1,32,24),headM,0,0,0); hs.scale.set(...R); head.add(hs);
-  const hairM=new THREE.MeshStandardMaterial({color:CARL.hair,roughness:1,emissive:CARL.hair});
+  const hairTex=ctex(8,64,(c,w,h)=>{       // Verlauf wie im Foto: am Scheitel fast schwarzbraun, zum Rand rötlich-braun
+    const hg=c.createLinearGradient(0,0,0,h*.42); hg.addColorStop(0,'#2e1813'); hg.addColorStop(1,'#5a3c30');
+    c.fillStyle=hg; c.fillRect(0,0,w,h);
+  });
+  const hairM=new THREE.MeshStandardMaterial({map:hairTex,roughness:1,emissive:0xffffff,emissiveMap:hairTex});
   const hair=mesh(new THREE.SphereGeometry(1,28,14,0,Math.PI*2,0,1.32),hairM,0,0.004,-0.006);
   hair.scale.set(R[0]*1.06,R[1]*1.05,R[2]*1.06); hair.rotation.x=-0.5; head.add(hair);
   for(const sx of [-1,1]){ const e=mesh(new THREE.SphereGeometry(1,10,8),skin,sx*R[0]*0.98,-0.015,-0.008); e.scale.set(0.016,0.036,0.024); head.add(e); }
