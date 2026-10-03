@@ -620,15 +620,15 @@ function makeCarl(){
   body.add(mesh(new THREE.BoxGeometry(0.356,0.02,0.216),dark,0,0.835,0));
   body.add(mesh(new THREE.CylinderGeometry(0.06,0.065,0.1,10),lm(0x666a70),0,1.3,0));
   // Kopf: Ellipsoid + Haar + gebogene Gesichts-Textur
-  const head=new THREE.Group(); head.position.y=1.47; body.add(head);
-  const R=[0.13,0.17,0.14];
+  const head=new THREE.Group(); head.position.y=1.5; body.add(head);
+  const R=[0.15,0.195,0.16];
   const sk=mesh(new THREE.SphereGeometry(1,20,16),skin,0,0,0); sk.scale.set(...R); head.add(sk);
   const hr=mesh(new THREE.SphereGeometry(1,20,16),hair,0,0.01,-0.015); hr.scale.set(R[0]*1.04,R[1]*1.04,R[2]*1.04); head.add(hr);
-  const fg=new THREE.PlaneGeometry(0.27,0.34,14,16), pos=fg.attributes.position;
+  const fg=new THREE.PlaneGeometry(0.31,0.397,14,16), pos=fg.attributes.position;
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i), y=pos.getY(i);
     const k=Math.max(0,1-(x/(R[0]*1.04))**2-(y/(R[1]*1.04))**2);
-    pos.setZ(i,R[2]*1.04*Math.sqrt(k)-0.015+0.004);
+    pos.setZ(i,R[2]*1.04*(0.6+0.4*Math.sqrt(k))-0.015);
   }
   fg.computeVertexNormals();
   const ft=new THREE.TextureLoader().load('face.png'); ft.colorSpace=THREE.SRGBColorSpace;
@@ -660,7 +660,7 @@ const carl={
   mesh:makeCarl(), speed:1.6, t:0, phase:0,
   curve:new THREE.CatmullRomCurve3([V(-6,8),V(2,14),V(4,22),V(-4,26),V(-10,18)],true,'catmullrom',0.5),
 };
-carl.len=carl.curve.getLength(); carl.mesh.scale.setScalar(1.3); scene.add(carl.mesh);
+carl.len=carl.curve.getLength(); carl.mesh.scale.setScalar(2.0); scene.add(carl.mesh);
 function updateCarl(dt){
   const d=carl, {body,head,arms,legs,knees}=d.mesh.userData;
   d.t=(d.t+d.speed*dt/d.len)%1;
