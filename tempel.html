@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Japanischer Tempel – 3D</title>
-<meta name="description" content="Begehbare 3D-Szene eines japanischen Tempels mit Eiffelturm, Torii, Teich, Tieren und Carl, der seine Runde joggt – direkt im Browser.">
+<meta name="description" content="Begehbare 3D-Szene eines japanischen Tempels mit Tokyo Tower, Torii, Teich, Tieren und Carl, der seine Runde joggt – direkt im Browser.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Japanischer Tempel – 3D">
-<meta property="og:description" content="Begehbare 3D-Szene eines japanischen Tempels mit Eiffelturm, Torii, Teich, Tieren und Carl, der seine Runde joggt – direkt im Browser.">
+<meta property="og:description" content="Begehbare 3D-Szene eines japanischen Tempels mit Tokyo Tower, Torii, Teich, Tieren und Carl, der seine Runde joggt – direkt im Browser.">
 <meta property="og:url" content="https://helmutqualtinger.github.io/japan-tempel/tempel.html">
 <meta property="og:image" content="https://helmutqualtinger.github.io/japan-tempel/preview.jpg">
 <meta property="og:image:width" content="1200">
@@ -16,7 +16,7 @@
 <meta property="og:locale" content="de_DE">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Japanischer Tempel – 3D">
-<meta name="twitter:description" content="Begehbare 3D-Szene eines japanischen Tempels mit Eiffelturm, Torii, Teich, Tieren und Carl, der seine Runde joggt – direkt im Browser.">
+<meta name="twitter:description" content="Begehbare 3D-Szene eines japanischen Tempels mit Tokyo Tower, Torii, Teich, Tieren und Carl, der seine Runde joggt – direkt im Browser.">
 <meta name="twitter:image" content="https://helmutqualtinger.github.io/japan-tempel/preview.jpg">
 <style>
   :root{--panel:rgba(18,20,30,.62);--line:rgba(255,255,255,.18);--accent:#e8b04a}
@@ -370,60 +370,68 @@ for(const x of [-6,-2,2,6]){
 hall.position.set(0,0,-8);
 scene.add(hall);
 
-// ---------- Eiffelturm (anstelle der Pagode) ----------
-const TOWER={x:-26, z:-4, half:6.8, h:33};     // Standort, halbe Fußbreite, Höhe (auch für Wegsuche, Drohne und Bäume)
-const towerMat=new THREE.MeshStandardMaterial({color:0x6e5a44,roughness:.55,metalness:.55,emissive:0xffb24a,emissiveIntensity:0});
-function eiffel(){
-  const g=new THREE.Group(), H=30;
-  // Träger von a nach b
-  const beam=(a,b,th)=>{ const m=mesh(new THREE.BoxGeometry(th,th,a.distanceTo(b)),towerMat); m.position.copy(a).add(b).multiplyScalar(0.5); m.lookAt(b); g.add(m); return m; };
-  // halbe Breite der Eckpfeiler-Achsen über der Höhe (nach den echten Proportionen: Fuß, 1., 2., 3. Plattform, Spitze)
-  const prof=new THREE.CatmullRomCurve3([[6.0,0],[4.35,2.6],[3.15,5.5],[2.35,8.4],[1.9,11.2],[1.25,16],[0.85,21.5],[0.6,26.8],[0.42,H]].map(([w,y])=>new THREE.Vector3(w,y,0)),false,'catmullrom',0.5);
-  const N=26, lv=Array.from({length:N+1},(_,i)=>prof.getPointAt(i/N));       // lv[i] = (halbe Breite, Höhe)
+// ---------- Tokyo Tower (anstelle der Pagode) ----------
+const TOWER={x:-26, z:-4, half:5.8, h:34};     // Standort, halbe Fußbreite, Höhe (auch für Wegsuche, Drohne und Bäume)
+// Anstrich in "International Orange" und Weiß, in Bändern wechselnd; nachts orange angestrahlt (emissive, siehe applyLight)
+const towerMat=new THREE.MeshStandardMaterial({color:0xee4f23,roughness:.55,metalness:.35,emissive:0xff6a1a,emissiveIntensity:0});
+const towerWhite=new THREE.MeshStandardMaterial({color:0xf3f1ea,roughness:.55,metalness:.3,emissive:0xffd9b0,emissiveIntensity:0});
+function tokyoTower(){
+  const g=new THREE.Group(), H=25.6;            // Höhe des Fachwerks; darüber die Antenne
+  const BANDS=[4.2,7.4,10.6,13.8,17.4,20.2,23.0];                             // Farbwechsel: unten Orange, dann abwechselnd
+  const paint=y=>BANDS.filter(b=>y>=b).length%2 ? towerWhite : towerMat;
+  // Träger von a nach b, Farbe nach der Höhe seiner Mitte
+  const beam=(a,b,th)=>{ const m=mesh(new THREE.BoxGeometry(th,th,a.distanceTo(b)),paint((a.y+b.y)/2)); m.position.copy(a).add(b).multiplyScalar(0.5); m.lookAt(b); g.add(m); return m; };
+  // halbe Breite der Eckpfeiler-Achsen über der Höhe (Fuß, Hauptdeck bei ~150 m, Top Deck bei ~250 m; 1 Einheit ≈ 10 m Turmhöhe)
+  const prof=new THREE.CatmullRomCurve3([[5.0,0],[3.95,3],[3.05,6.5],[2.3,10.5],[1.75,15],[1.15,20.2],[0.72,H]].map(([w,y])=>new THREE.Vector3(w,y,0)),false,'catmullrom',0.5);
+  const N=24, lv=Array.from({length:N+1},(_,i)=>prof.getPointAt(i/N));       // lv[i] = (halbe Breite, Höhe)
   const corner=(i,sx,sz)=>new THREE.Vector3(sx*lv[i].x,lv[i].y,sz*lv[i].x);
-  const L1=5.5, L2=11.2, L3=26.8;
+  const widthAt=y=>{ let best=lv[0]; for(const q of lv) if(Math.abs(q.y-y)<Math.abs(best.y-y)) best=q; return best.x; };
+  const OPEN=3.6;                                                             // darunter stehen die vier Füße frei
   for(let i=0;i<N;i++){
-    const y0=lv[i].y, th=0.16+0.75*Math.max(0,1-y0/L2)**1.3;                 // Pfeiler werden nach oben schlanker
+    const y0=lv[i].y, th=0.14+0.5*Math.max(0,1-y0/15)**1.2;                  // Pfeiler werden nach oben schlanker
     for(const sx of [-1,1]) for(const sz of [-1,1]) beam(corner(i,sx,sz),corner(i+1,sx,sz),th);
-    if(y0<L1-0.6) continue;                                                  // unter der 1. Plattform bleiben die Bögen offen
-    const bt=Math.max(0.05,th*0.32);
+    if(y0<OPEN) continue;
+    const bt=Math.max(0.045,th*0.3);
     for(const [a,b] of [[[-1,-1],[1,-1]],[[1,-1],[1,1]],[[1,1],[-1,1]],[[-1,1],[-1,-1]]]){   // vier Seitenflächen: Kreuzverband + Riegel
       beam(corner(i,...a),corner(i+1,...b),bt); beam(corner(i,...b),corner(i+1,...a),bt);
       beam(corner(i+1,...a),corner(i+1,...b),bt);
     }
   }
-  // Fachwerk in den vier Füßen: Diagonalen zwischen Pfeiler und einer inneren Strebe
-  for(const sx of [-1,1]) for(const sz of [-1,1]) for(let i=0;lv[i+1].y<L1;i++){
-    const o=1.15, a=corner(i,sx,sz), b=corner(i+1,sx,sz);
+  // Fachwerk in den vier Füßen + flacher Bogen zwischen den Füßen
+  for(const sx of [-1,1]) for(const sz of [-1,1]) for(let i=0;lv[i].y<OPEN;i++){
+    const o=0.95, a=corner(i,sx,sz), b=corner(i+1,sx,sz);
     for(const [dx,dz] of [[-sx*o,0],[0,-sz*o]]){
       const a2=a.clone().add(new THREE.Vector3(dx,0,dz)), b2=b.clone().add(new THREE.Vector3(dx,0,dz));
-      beam(a2,b2,0.2); beam(a,b2,0.08); beam(a2,b,0.08);
+      beam(a2,b2,0.17); beam(a,b2,0.07); beam(a2,b,0.07);
     }
   }
-  // die großen Bögen unter der 1. Plattform
   for(let k=0;k<4;k++){
-    const arch=mesh(new THREE.TorusGeometry(3.5,0.14,6,28,Math.PI),towerMat,0,1.7,4.15);
-    const arch2=mesh(new THREE.TorusGeometry(3.85,0.07,5,28,Math.PI),towerMat,0,1.7,4.15);
-    const p=new THREE.Group(); p.add(arch,arch2); p.rotation.y=k*Math.PI/2; g.add(p);
+    const arch=mesh(new THREE.TorusGeometry(3.0,0.11,6,24,Math.PI),towerMat,0,0,0); arch.scale.y=0.62;
+    const p=new THREE.Group(); arch.position.set(0,2.1,widthAt(3.2)); p.add(arch); p.rotation.y=k*Math.PI/2; g.add(p);
   }
-  // Plattformen mit Brüstung
-  for(const [y,ext,hh] of [[L1,0.75,0.42],[L2,0.5,0.34],[L3,0.42,0.3]]){
-    const w=prof.getPointAt(Math.min(1,y/H)).x;                               // Näherung reicht: getPointAt ist nicht exakt höhenlinear
-    let wy=w; for(const q of lv) if(Math.abs(q.y-y)<0.7){ wy=q.x; }
-    const s=2*wy+2*ext;
-    g.add(mesh(new THREE.BoxGeometry(s,hh,s),towerMat,0,y,0));
-    g.add(mesh(new THREE.BoxGeometry(s+0.25,0.07,s+0.25),towerMat,0,y+hh/2+0.28,0));
-    for(const sx of [-1,1]) for(const sz of [-1,1]) g.add(mesh(new THREE.BoxGeometry(0.06,0.3,0.06),towerMat,sx*(s/2+0.08),y+hh/2+0.14,sz*(s/2+0.08)));
+  // FootTown: das Gebäude unter dem Turm
+  const town=new THREE.MeshStandardMaterial({color:0xcfc9bd,roughness:.85}), win=new THREE.MeshStandardMaterial({color:0x2b3540,roughness:.3,metalness:.4,emissive:0xffd9a0,emissiveIntensity:0});
+  g.add(mesh(new THREE.BoxGeometry(6.2,2.0,6.2),town,0,1.0,0));
+  for(const y of [0.55,1.05,1.55]) g.add(mesh(new THREE.BoxGeometry(6.26,0.2,6.26),win,0,y,0));
+  g.add(mesh(new THREE.BoxGeometry(6.5,0.12,6.5),town,0,2.06,0));
+  // Hauptdeck (zweistöckig) und Top Deck: weiß mit Fensterband
+  for(const [y,hh,ext] of [[15,1.25,0.55],[H-0.35,0.7,0.38]]){
+    const sdk=2*widthAt(y)+2*ext;
+    g.add(mesh(new THREE.BoxGeometry(sdk,hh,sdk),towerWhite,0,y,0));
+    g.add(mesh(new THREE.BoxGeometry(sdk+0.04,hh*0.3,sdk+0.04),win,0,y+hh*0.14,0));
+    g.add(mesh(new THREE.BoxGeometry(sdk+0.04,hh*0.18,sdk+0.04),win,0,y-hh*0.24,0));
+    g.add(mesh(new THREE.BoxGeometry(sdk+0.2,0.06,sdk+0.2),towerMat,0,y+hh/2+0.03,0));
   }
-  // Spitze: Kuppel, Laterne, Antenne
-  g.add(mesh(new THREE.CylinderGeometry(0.34,0.5,0.9,10),towerMat,0,H+0.3,0));
-  g.add(mesh(new THREE.SphereGeometry(0.36,12,8,0,Math.PI*2,0,Math.PI/2),towerMat,0,H+0.75,0));
-  g.add(mesh(new THREE.CylinderGeometry(0.03,0.07,2.4,6),towerMat,0,H+2.2,0));
-  const beacon=mesh(new THREE.SphereGeometry(0.12,10,8),new THREE.MeshStandardMaterial({color:0xfff2c0,emissive:0xffe9a0,emissiveIntensity:0}),0,H+1.15,0);
-  beacon.castShadow=false; g.add(beacon); g.userData.beacon=beacon.material;
+  // Antenne: schlanker Mast mit orange-weißen Abschnitten
+  let ay=H;
+  for(const [len,r,k] of [[1.6,0.34,0],[1.5,0.26,1],[1.4,0.2,0],[1.3,0.14,1],[1.2,0.09,0],[1.2,0.05,1]]){
+    g.add(mesh(new THREE.CylinderGeometry(r*0.8,r,len,8),k?towerWhite:towerMat,0,ay+len/2,0)); ay+=len;
+  }
+  const beacon=mesh(new THREE.SphereGeometry(0.1,10,8),new THREE.MeshStandardMaterial({color:0xffc0c0,emissive:0xff2a2a,emissiveIntensity:0}),0,ay+0.05,0);
+  beacon.castShadow=false; g.add(beacon); g.userData={beacon:beacon.material,win};
   return g;
 }
-const tower=eiffel(); tower.position.set(TOWER.x,0,TOWER.z); scene.add(tower);
+const tower=tokyoTower(); tower.position.set(TOWER.x,0,TOWER.z); scene.add(tower);
 
 // ---------- Torii ----------
 function torii(scale=1){
@@ -837,12 +845,12 @@ function makeDrone(){
   return g;
 }
 // Die Drohne begleitet Carl: schwebt rund 4 m (8 Einheiten, 1 m ≈ 2 Einheiten) über seinem Kopf und zieht weich nach.
-// Über der Halle, dem Eiffelturm und nahe an Bäumen steigt sie über das Hindernis.
+// Über der Halle, dem Tokyo Tower und nahe an Bäumen steigt sie über das Hindernis.
 const drone={mesh:makeDrone(), pos:new THREE.Vector3(0,12,9), vel:new THREE.Vector3(), yaw:0, bank:0, above:8};
 drone.mesh.scale.setScalar(1.6); drone.mesh.rotation.order='YXZ'; scene.add(drone.mesh);
 function droneCeiling(x,z){                     // Mindesthöhe über Hindernissen
   if(Math.abs(x)<12.5 && z>-17.5 && z<1.5) return 15;                      // Hallendach
-  if(Math.abs(x-TOWER.x)<TOWER.half+1.5 && Math.abs(z-TOWER.z)<TOWER.half+1.5) return TOWER.h+5;   // Eiffelturm
+  if(Math.abs(x-TOWER.x)<TOWER.half+1.5 && Math.abs(z-TOWER.z)<TOWER.half+1.5) return TOWER.h+5;   // Tokyo Tower
   for(const [ox,oz] of obstacles) if((x-ox)**2+(z-oz)**2<16) return 15;    // Baumkronen
   return 0;
 }
@@ -1014,7 +1022,7 @@ function navBlocked(x,z){
   if(Math.abs(x)<8+AGENT_R && z>-13.5-AGENT_R && z<-2.5+AGENT_R) return true;                  // Halle samt Veranda und Geländer
   if(Math.abs(x)<11+AGENT_R && z>-16-AGENT_R && z<AGENT_R && !(Math.abs(x)<=11 && z>=-16 && z<=0) && !(Math.abs(x)<3 && z>0)) return true;   // Abstand zur Sockelwand (außer vor der Treppe)
   if(Math.abs(x-CAR.x)<CAR.hw+AGENT_R && Math.abs(z-CAR.z)<CAR.hl+AGENT_R) return true;           // geparkter Tesla
-  if(Math.abs(x-TOWER.x)<TOWER.half+AGENT_R && Math.abs(z-TOWER.z)<TOWER.half+AGENT_R) return true;   // Eiffelturm (ganzer Fußabdruck)
+  if(Math.abs(x-TOWER.x)<TOWER.half+AGENT_R && Math.abs(z-TOWER.z)<TOWER.half+AGENT_R) return true;   // Tokyo Tower (ganzer Fußabdruck)
   if(((x-16)/(7.8+AGENT_R))**2+((z-12)/(5.46+AGENT_R))**2<1 && Math.abs(z-12)>0.6) return true; // Teich + Steinrand, frei bleibt nur die Brücke
   for(const [ox,oz,r] of navCircles) if((x-ox)**2+(z-oz)**2<r*r) return true;
   return false;
@@ -1330,7 +1338,8 @@ function applyLight(b){
   sun.color.set(b>0.5?0x8fa8ff:0xfff1d6);
   M.glow.emissiveIntensity=b*1.6;
   for(const l of lanterns) l.userData.light.intensity=b*14;
-  towerMat.emissiveIntensity=b*0.55; tower.userData.beacon.emissiveIntensity=b*4;   // Turm nachts golden angestrahlt
+  towerMat.emissiveIntensity=b*0.75; towerWhite.emissiveIntensity=b*0.45;                 // Turm nachts orange angestrahlt
+  tower.userData.beacon.emissiveIntensity=b*5; tower.userData.win.emissiveIntensity=b*1.2;
   const tu=tesla.userData;                                  // Auto: nachts Licht an, Spiegelungen dunkler
   tu.lamp.emissiveIntensity=0.3+2.2*b; tu.tail.emissiveIntensity=0.35+1.4*b; tu.screen.emissiveIntensity=0.5+0.9*b;
   for(const m of tu.env) m.envMapIntensity=0.7*(1-0.8*b)*(1-0.4*rainB);
