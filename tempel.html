@@ -804,25 +804,35 @@ function makeDrone(){
   g.userData={rotors,front,rear};
   return g;
 }
-const drone={
-  mesh:makeDrone(), speed:5.5, t:0,
-  curve:new THREE.CatmullRomCurve3([[15,14.5,2],[12,16,-14],[-2,17,-19],[-15,15.5,-10],[-14,14,6],[-3,13,15],[9,13.5,13]].map(p=>new THREE.Vector3(...p)),true,'catmullrom',0.5),
-  bank:0,
-};
-drone.len=drone.curve.getLength(); drone.mesh.scale.setScalar(1.6); drone.mesh.rotation.order='YXZ'; scene.add(drone.mesh);
-const droneA=new THREE.Vector3(), droneB=new THREE.Vector3();
+// Die Drohne begleitet Carl: schwebt rund 4 m (8 Einheiten, 1 m ≈ 2 Einheiten) über seinem Kopf und zieht weich nach.
+// Über der Halle, der Pagode und nahe an Bäumen steigt sie über das Hindernis.
+const drone={mesh:makeDrone(), pos:new THREE.Vector3(0,12,9), vel:new THREE.Vector3(), yaw:0, bank:0, above:8};
+drone.mesh.scale.setScalar(1.6); drone.mesh.rotation.order='YXZ'; scene.add(drone.mesh);
+function droneCeiling(x,z){                     // Mindesthöhe über Hindernissen
+  if(Math.abs(x)<12.5 && z>-17.5 && z<1.5) return 15;                      // Hallendach
+  if(Math.abs(x+26)<6 && Math.abs(z+4)<6) return 22;                       // Pagode
+  for(const [ox,oz] of obstacles) if((x-ox)**2+(z-oz)**2<16) return 15;    // Baumkronen
+  return 0;
+}
+const droneGoal=new THREE.Vector3(), droneOld=new THREE.Vector3();
 function updateDrone(dt){
-  const d=drone, time=clock.elapsedTime;
-  d.t=(d.t+d.speed*dt/d.len)%1;
-  const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t,droneA), ahead=d.curve.getTangentAt((d.t+0.012)%1,droneB);
-  d.mesh.position.copy(p); d.mesh.position.y+=Math.sin(time*1.7)*0.12;                      // leichtes Schweben
-  d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
-  const turn=tg.x*ahead.z-tg.z*ahead.x;                                                      // Kurvenrichtung -> in die Kurve legen
-  d.bank+=(Math.max(-0.5,Math.min(0.5,turn*3.5))-d.bank)*Math.min(1,dt*3);
-  d.mesh.rotation.z=d.bank; d.mesh.rotation.x=0.16+tg.y*-0.6;                                // Nase im Vorwärtsflug gesenkt
+  const d=drone, time=clock.elapsedTime, p=d.pos;
+  const cx=carl.pos.x, cz=carl.pos.z;
+  droneGoal.set(cx, Math.max(groundY(cx,cz)+3.4+d.above, droneCeiling(cx,cz), droneCeiling(p.x,p.z)), cz);
+  droneOld.copy(p);
+  const k=1-Math.exp(-dt*2.4);
+  p.x+=(droneGoal.x-p.x)*k; p.z+=(droneGoal.z-p.z)*k; p.y+=(droneGoal.y-p.y)*(1-Math.exp(-dt*1.6));
+  if(dt>0) d.vel.subVectors(p,droneOld).divideScalar(dt);
+  const hs=Math.hypot(d.vel.x,d.vel.z);
+  const want=hs>0.4 ? Math.atan2(d.vel.x,d.vel.z) : Math.atan2(carl.dir.x,carl.dir.z);   // in Flugrichtung, im Schwebeflug wie Carl
+  let df=want-d.yaw; df=Math.atan2(Math.sin(df),Math.cos(df));
+  const turn=df*Math.min(1,dt*3); d.yaw+=turn;
+  d.bank+=(Math.max(-0.45,Math.min(0.45,-turn/Math.max(dt,1e-3)*0.25*Math.min(1,hs/3)))-d.bank)*Math.min(1,dt*4);   // in die Kurve legen
+  d.mesh.position.set(p.x,p.y+Math.sin(time*1.7)*0.12,p.z);                              // leichtes Schweben
+  d.mesh.rotation.set(Math.min(0.3,hs*0.045),d.yaw,d.bank);                               // Nase im Vorwärtsflug gesenkt
   const {rotors,front,rear}=d.mesh.userData;
   rotors.forEach((r,i)=>{ r.rotation.y+=(i%3===0?1:-1)*dt*70; });
-  const blink=(time%1.2)<0.12 ? 3.5 : 0.25;                                                  // Blitzlicht
+  const blink=(time%1.2)<0.12 ? 3.5 : 0.25;                                               // Blitzlicht
   front.emissiveIntensity=1.6+blink*0.3; rear.emissiveIntensity=blink;
 }
 
@@ -1503,7 +1513,7 @@ renderer.setAnimationLoop(()=>{
   blend += ((night?1:0)-blend)*0.05;
   rainB += ((raining?1:0)-rainB)*0.03;
   const dt=Math.min(clock.getDelta(),0.05);
-  updateDeer(dt); updateGiraffe(dt); updateDrone(dt); updateCarl(dt); updateChaser(dt); updateDust(dt); updateFollow();
+  updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateDrone(dt); updateChaser(dt); updateDust(dt); updateFollow();
   applyLight(blend);
   rain.visible=rainB>0.01;
   if(rain.visible){
