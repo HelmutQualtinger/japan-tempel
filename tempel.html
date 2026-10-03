@@ -717,11 +717,17 @@ function makeCarl(){
   g.userData={body,head,arms,elbows,legs,knees};
   return g;
 }
-// Runde: durch die Laternenallee zum kleinen Torii, außen zurück, über die Brücke und an der Halle vorbei
+// Runde: Laternenallee -> kleines Torii -> außen zurück -> über die Brücke -> Treppe hinauf,
+// auf dem Steinsockel einmal um die Halle (zwischen Veranda und Sockelkante) -> Treppe hinunter
 const carl={
   mesh:makeCarl(), speed:3.2, t:0.02, phase:0,
-  curve:new THREE.CatmullRomCurve3([V(0,6),V(0,14),V(0,24),V(0,32),V(3.5,36.5),V(7,32),V(6.8,22),V(7,14.5),
-    V(8.4,12),V(10,12),V(13,12),V(16,12),V(19,12),V(22,12),V(24.4,11.4),V(24.6,7),V(21,3.4),V(15,2.6),V(9,2.2),V(4,3),V(1,4.2)],true,'catmullrom',0.5),
+  curve:new THREE.CatmullRomCurve3([
+    V(0,6),V(0,14),V(0,24),V(0,32),V(3.5,36.5),V(7,32),V(6.8,22),V(7,14.5),
+    V(8.4,12),V(10,12),V(13,12),V(16,12),V(19,12),V(22,12),V(24.4,11.4),V(24.6,7),
+    V(21,3.4),V(15,2.8),V(9.5,2.5),V(5,3),V(0.5,3),V(-1.2,1.6),V(-1.4,-0.4),
+    V(-2.8,-1.45),V(-6.5,-1.45),V(-8.6,-2),V(-9,-4.5),V(-9,-8),V(-9,-11.5),V(-8.6,-13.8),V(-6.5,-14.25),
+    V(0,-14.25),V(6.5,-14.25),V(8.6,-13.8),V(9,-11.5),V(9,-8),V(9,-4.5),V(8.6,-2),V(6.5,-1.45),
+    V(2.8,-1.45),V(1.4,-0.4),V(1.2,1.6),V(0.5,3.8)],true,'catmullrom',0.5),
 };
 // Bodenhöhe auf der Brücke (Bogen wie die Planken, x 10..22 bei z=12) samt kurzer Rampen über den Teichrand
 function bridgeY(x,z){
@@ -733,6 +739,12 @@ function bridgeY(x,z){
   return 0;
 }
 carl.len=carl.curve.getLength(); carl.mesh.scale.setScalar(2.0); scene.add(carl.mesh);
+// Bodenhöhe unter Carl: Brücke, Hallentreppe (als Rampe) und Steinsockel der Halle (Oberkante 1.7)
+function groundY(x,z){
+  if(Math.abs(x)<=10 && z<=-1 && z>=-15) return 1.7;
+  if(Math.abs(x)<3 && z>-1 && z<1.2) return 1.7*(1.2-z)/2.2;
+  return bridgeY(x,z);
+}
 // Staubwölkchen: Sprite-Pool, bei jedem Fußaufsatz auf Kies ein kleiner Schwung
 const dustTex=(()=>{
   const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
@@ -744,7 +756,7 @@ for(let i=0;i<60;i++){
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:dustTex,color:0xd2c4a6,transparent:true,opacity:0,depthWrite:false}));
   sp.visible=false; sp.userData={life:0,max:1,vel:new THREE.Vector3(),size:1}; scene.add(sp); dust.push(sp);
 }
-const onGravel=(x,z)=>Math.abs(x)<23 && Math.abs(z)<23 && !(Math.abs(x)<2 && z>15) && bridgeY(x,z)===0;
+const onGravel=(x,z)=>Math.abs(x)<23 && Math.abs(z)<23 && !(Math.abs(x)<2 && z>15) && groundY(x,z)===0;
 function puff(x,z,dir){
   const n=5;
   for(let k=0;k<n;k++){
@@ -789,7 +801,7 @@ function updateCarl(dt){
   head.rotation.y=-s*0.14+Math.sin(d.phase*0.17)*0.2;        // schaut sich um
   head.rotation.z=Math.sin(d.phase*0.23)*0.04;
   // tiefster Fuß steht auf dem Boden, dazwischen eine kurze Flugphase
-  p.y=bridgeY(p.x,p.z)+S*(-low+0.035*Math.abs(c));
+  p.y=groundY(p.x,p.z)+S*(-low+0.035*Math.abs(c));
   d.mesh.position.copy(p);
   // Fußaufsatz (Bein ganz vorn): Staub auf Kies
   const step=Math.floor((d.phase-Math.PI/2)/Math.PI);
@@ -975,7 +987,7 @@ btn('carlBtn',()=>{
   if(follow){
     savedView={p:camera.position.clone(), t:controls.target.clone()};
     carl.mesh.getWorldDirection(followDir);
-    carlHead.copy(carl.mesh.position); carlHead.y=bridgeY(carlHead.x,carlHead.z)+2.6;
+    carlHead.copy(carl.mesh.position); carlHead.y=groundY(carlHead.x,carlHead.z)+2.6;
     controls.target.copy(carlHead);
     camera.position.copy(carlHead).addScaledVector(followDir,7.5); camera.position.y+=1.2;
   } else if(savedView){ camera.position.copy(savedView.p); controls.target.copy(savedView.t); }
@@ -983,7 +995,7 @@ btn('carlBtn',()=>{
 });
 function updateFollow(){
   if(!follow) return;
-  carlHead.copy(carl.mesh.position); carlHead.y=bridgeY(carlHead.x,carlHead.z)+2.6;
+  carlHead.copy(carl.mesh.position); carlHead.y=groundY(carlHead.x,carlHead.z)+2.6;
   carl.mesh.getWorldDirection(camStep);
   followDir.lerp(camStep,0.06).setY(0).normalize();            // in Kurven weich mitschwenken
   camStep.subVectors(camera.position,controls.target);         // Abstand (Zoom) und Höhe des Nutzers beibehalten
