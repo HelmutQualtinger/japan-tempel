@@ -816,7 +816,78 @@ function applyLight(b){
   sun.color.set(b>0.5?0x8fa8ff:0xfff1d6);
   M.glow.emissiveIntensity=b*1.6;
   for(const l of lanterns) l.userData.light.intensity=b*14;
+  const u=skyMat.uniforms;
+  u.uHorizon.value.copy(scene.background);
+  u.uZenith.value.copy(zenDay).lerp(zenNight,b).lerp(scene.background,rainB*0.9);
+  u.uNight.value=b; u.uRain.value=rainB;
 }
+// ---------- Himmelskuppel: Verlauf, Sonne/Mond, prozedurale Wolken (fBm-Rauschen), Sterne ----------
+const zenDay=new THREE.Color(0x2f74c9), zenNight=new THREE.Color(0x060a1c);
+const skyMat=new THREE.ShaderMaterial({
+  side:THREE.BackSide, depthWrite:false, depthTest:false, fog:false,
+  uniforms:{
+    uHorizon:{value:new THREE.Color()}, uZenith:{value:new THREE.Color()},
+    uSun:{value:sun.position.clone().normalize()},
+    uNight:{value:0}, uRain:{value:0}, uTime:{value:0},
+  },
+  vertexShader:`
+    varying vec3 vDir;
+    void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader:`
+    precision highp float;
+    varying vec3 vDir;
+    uniform vec3 uHorizon,uZenith,uSun; uniform float uNight,uRain,uTime;
+    float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+    float noise(vec2 p){
+      vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+      return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+    }
+    float fbm(vec2 p){
+      float v=0.0, a=0.5; mat2 m=mat2(1.6,1.2,-1.2,1.6);
+      for(int i=0;i<6;i++){ v+=a*noise(p); p=m*p+3.1; a*=0.5; }
+      return v;
+    }
+    float clouds(vec2 p,float t){
+      vec2 q=p+vec2(t*0.03,t*0.011);                              // Windrichtung und -tempo
+      q+=0.55*vec2(fbm(q*0.6+t*0.004),fbm(q*0.6+5.2));          // Verwirbelung
+      return fbm(q)*0.72+fbm(q*2.7-t*0.01)*0.28;
+    }
+    void main(){
+      vec3 d=normalize(vDir);
+      float up=max(d.y,0.0);
+      vec3 col=mix(uHorizon,uZenith,pow(up,0.55));
+      // Sonne bzw. Mond mit Hof
+      float sd=max(dot(d,uSun),0.0), clear=1.0-uRain;
+      vec3 sunCol=mix(vec3(1.0,0.93,0.78),vec3(0.82,0.88,1.0),uNight);
+      col+=sunCol*(pow(sd,18.0)*0.16+pow(sd,180.0)*0.35)*clear*mix(1.0,0.45,uNight);
+      col=mix(col,sunCol*mix(1.25,0.95,uNight),smoothstep(0.9993,0.9996,sd)*clear);
+      // Sterne
+      vec2 sp=d.xz/(abs(d.y)+0.35)*90.0; float st=hash(floor(sp));
+      float star=step(0.992,st)*smoothstep(0.5,0.1,length(fract(sp)-0.5))*(0.5+0.5*sin(uTime*2.0+st*90.0));
+      col+=vec3(star)*uNight*clear*smoothstep(0.02,0.25,d.y);
+      // Wolkenschicht: Blickstrahl auf eine Ebene projiziert, zum Horizont hin gestaucht
+      if(d.y>0.0){
+        vec2 p=d.xz/(d.y+0.12)*0.85;
+        float cover=mix(0.47,0.2,uRain);
+        float n=clouds(p,uTime);
+        float dens=smoothstep(cover,cover+0.2,n);
+        // Beleuchtung: Dichte Richtung Sonne abtasten -> sonnenabgewandte Seiten und Unterseiten dunkler
+        float n2=clouds(p+normalize(uSun.xz+1e-4)*0.18,uTime);
+        float lit=clamp(0.62+(n-n2)*2.2,0.0,1.0)*(1.0-0.45*smoothstep(cover+0.1,cover+0.5,n));
+        vec3 day=mix(vec3(0.50,0.56,0.66),vec3(1.0,0.99,0.96),lit);
+        vec3 storm=mix(vec3(0.20,0.22,0.26),vec3(0.52,0.55,0.60),lit);
+        vec3 c=mix(day,storm,uRain);
+        c+=sunCol*pow(sd,6.0)*0.25*(1.0-dens)*clear;                 // helle Ränder gegen die Sonne
+        c*=mix(1.0,0.16,uNight); c+=vec3(0.03,0.04,0.07)*uNight*lit; // nachts fahles Mondlicht
+        c=mix(c,uHorizon,smoothstep(0.22,0.0,d.y)*0.85);             // Dunst am Horizont
+        col=mix(col,c,dens*smoothstep(0.0,0.07,d.y)*mix(0.96,1.0,uRain));
+      }
+      gl_FragColor=vec4(col,1.0);
+      #include <colorspace_fragment>
+    }`,
+});
+const sky=new THREE.Mesh(new THREE.SphereGeometry(400,32,16),skyMat);
+sky.renderOrder=-10; sky.frustumCulled=false; scene.add(sky);
 // ---------- Regen ----------
 const RAIN_N=8000, RAIN_BOX=120, RAIN_H=60;
 const rainPos=new Float32Array(RAIN_N*6), rainVel=new Float32Array(RAIN_N);
@@ -945,6 +1016,7 @@ renderer.setAnimationLoop(()=>{
     rainGeo.attributes.position.needsUpdate=true;
   }
   controls.update();
+  sky.position.copy(camera.position); skyMat.uniforms.uTime.value=clock.elapsedTime;
   renderer.render(scene,camera);
 });
 </script>
