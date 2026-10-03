@@ -26,7 +26,7 @@ Danach im Browser öffnen: <http://localhost:8757/tempel.html>
 ## Was in der Szene steckt
 
 - **Haupthalle** mit Steinsockel, Treppe, roten Holzpfeilern, Shoji-Türen, Veranda und zweistöckigem, geschwungenem Dach
-- **Fünfstöckige Pagode**
+- **Eiffelturm** (anstelle der früheren Pagode)
 - **Zwei Torii-Tore** und ein Pfad mit Steinlaternen
 - **Teich** mit Holzbrücke
 - **Kiefern und Kirschbäume**
