@@ -608,24 +608,72 @@ function updateGiraffe(dt){
   head.rotation.x=0.95+Math.sin(d.phase+1)*0.06;
 }
 
-// ---------- Carl (Foto-Billboard) ----------
-const carlTex=new THREE.TextureLoader().load('carl.png'); carlTex.colorSpace=THREE.SRGBColorSpace;
-const carlMat=new THREE.MeshBasicMaterial({map:carlTex,transparent:true,alphaTest:0.5,side:THREE.DoubleSide});
+// ---------- Carl (3D-Figur, Gesicht aus Foto) ----------
+function makeCarl(){
+  const g=new THREE.Group();            // blickt nach +Z
+  const lm=(c,r=.9)=>new THREE.MeshStandardMaterial({color:c,roughness:r});
+  const skin=lm(0xe8b9a0), knit=lm(0xa9a291,1), band=lm(0xeeeae0,1), dark=lm(0x25272e,1),
+        jeans=lm(0x6f8fb8,1), hair=lm(0x9a6a40,1), shoe=lm(0xf0f0f0,.8), sole=lm(0x333333);
+  const body=new THREE.Group(); g.add(body);   // wippt beim Gehen
+  const torso=mesh(new THREE.BoxGeometry(0.34,0.5,0.2),knit,0,1.03,0); body.add(torso);
+  body.add(mesh(new THREE.BoxGeometry(0.352,0.05,0.212),band,0,0.80,0));
+  body.add(mesh(new THREE.BoxGeometry(0.356,0.02,0.216),dark,0,0.835,0));
+  body.add(mesh(new THREE.CylinderGeometry(0.06,0.065,0.1,10),lm(0x666a70),0,1.3,0));
+  // Kopf: Ellipsoid + Haar + gebogene Gesichts-Textur
+  const head=new THREE.Group(); head.position.y=1.47; body.add(head);
+  const R=[0.13,0.17,0.14];
+  const sk=mesh(new THREE.SphereGeometry(1,20,16),skin,0,0,0); sk.scale.set(...R); head.add(sk);
+  const hr=mesh(new THREE.SphereGeometry(1,20,16),hair,0,0.01,-0.015); hr.scale.set(R[0]*1.04,R[1]*1.04,R[2]*1.04); head.add(hr);
+  const fg=new THREE.PlaneGeometry(0.27,0.34,14,16), pos=fg.attributes.position;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), y=pos.getY(i);
+    const k=Math.max(0,1-(x/(R[0]*1.04))**2-(y/(R[1]*1.04))**2);
+    pos.setZ(i,R[2]*1.04*Math.sqrt(k)-0.015+0.004);
+  }
+  fg.computeVertexNormals();
+  const ft=new THREE.TextureLoader().load('face.png'); ft.colorSpace=THREE.SRGBColorSpace;
+  head.add(new THREE.Mesh(fg,new THREE.MeshBasicMaterial({map:ft,transparent:true,alphaTest:0.4})));
+  // Arme (Drehpunkt Schulter)
+  const arms=[];
+  for(const s of [-1,1]){
+    const p=new THREE.Group(); p.position.set(s*0.215,1.25,0);
+    p.add(mesh(new THREE.CylinderGeometry(0.045,0.04,0.5,10),knit,0,-0.25,0));
+    p.add(mesh(new THREE.CylinderGeometry(0.047,0.047,0.04,10),band,0,-0.46,0));
+    p.add(mesh(new THREE.SphereGeometry(0.04,10,8),skin,0,-0.55,0));
+    body.add(p); arms.push(p);
+  }
+  // Beine (Hüfte + Knie)
+  const legs=[], knees=[];
+  for(const s of [-1,1]){
+    const p=new THREE.Group(); p.position.set(s*0.085,0.78,0);
+    p.add(mesh(new THREE.CylinderGeometry(0.075,0.065,0.4,10),jeans,0,-0.2,0));
+    const k=new THREE.Group(); k.position.y=-0.4; p.add(k);
+    k.add(mesh(new THREE.CylinderGeometry(0.063,0.055,0.34,10),jeans,0,-0.17,0));
+    k.add(mesh(new THREE.BoxGeometry(0.11,0.06,0.22),shoe,0,-0.35,0.04));
+    k.add(mesh(new THREE.BoxGeometry(0.115,0.02,0.225),sole,0,-0.385,0.04));
+    g.add(p); legs.push(p); knees.push(k);
+  }
+  g.userData={body,head,arms,legs,knees};
+  return g;
+}
 const carl={
-  mesh:new THREE.Group(), speed:1.6, t:0, phase:0,
+  mesh:makeCarl(), speed:1.6, t:0, phase:0,
   curve:new THREE.CatmullRomCurve3([V(-6,8),V(2,14),V(4,22),V(-4,26),V(-10,18)],true,'catmullrom',0.5),
 };
-const carlPic=new THREE.Mesh(new THREE.PlaneGeometry(1.0,2.0),carlMat); carlPic.position.y=1.0;
-carl.mesh.add(carlPic); scene.add(carl.mesh);
-carl.len=carl.curve.getLength();
+carl.len=carl.curve.getLength(); carl.mesh.scale.setScalar(1.3); scene.add(carl.mesh);
 function updateCarl(dt){
-  const d=carl;
+  const d=carl, {body,head,arms,legs,knees}=d.mesh.userData;
   d.t=(d.t+d.speed*dt/d.len)%1;
-  d.mesh.position.copy(d.curve.getPointAt(d.t));
-  d.phase+=d.speed*dt*3;
-  d.mesh.rotation.y=Math.atan2(camera.position.x-d.mesh.position.x,camera.position.z-d.mesh.position.z); // zur Kamera drehen
-  carlPic.position.y=1.0+Math.abs(Math.sin(d.phase))*0.08;
-  carlPic.rotation.z=Math.sin(d.phase)*0.05;
+  const p=d.curve.getPointAt(d.t), tg=d.curve.getTangentAt(d.t);
+  d.mesh.position.copy(p);
+  d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
+  d.phase+=d.speed*dt*3.2;
+  const sw=Math.sin(d.phase)*0.55;
+  legs[0].rotation.x=sw; legs[1].rotation.x=-sw;
+  knees[0].rotation.x=Math.max(0,-sw)*1.1; knees[1].rotation.x=Math.max(0,sw)*1.1;
+  arms[0].rotation.x=-sw*0.7; arms[1].rotation.x=sw*0.7;
+  body.position.y=Math.abs(Math.cos(d.phase))*0.025;
+  head.rotation.y=Math.sin(d.phase*0.5)*0.15;
 }
 
 // ---------- Himmel / Tag-Nacht ----------
