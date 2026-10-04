@@ -77,6 +77,7 @@ if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWo
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ---------- Szene ----------
 const scene = new THREE.Scene();
@@ -221,10 +222,33 @@ const T = {
     }
     ctx.globalAlpha=1;
   },[4,2]),
+  // Blütenbüschel auf transparentem Grund: fünfblättrige Blüten mit gekerbten Blütenblättern, Staubgefäßen und Knospen
   blossom: canvasTex(256,(ctx,s)=>{
-    ctx.fillStyle='#f0a2bb'; ctx.fillRect(0,0,s,s);
-    speckle(ctx,s,1600,['#f7c3d4','#e58aa9','#fde4ec','#d9739a'],1.5,5,0.7);
-  },[3,2]),
+    const flower=(x,y,R,rot)=>{
+      ctx.save(); ctx.translate(x,y); ctx.rotate(rot);
+      const gr=ctx.createRadialGradient(0,0,R*0.08,0,0,R);
+      gr.addColorStop(0,'#e0608c'); gr.addColorStop(0.3,'#f8c3d5'); gr.addColorStop(1,'#fff6f9');
+      for(let i=0;i<5;i++){
+        const L=R*(0.9+trnd()*0.1), W=R*0.44;
+        ctx.fillStyle=gr; ctx.beginPath(); ctx.moveTo(0,0);
+        ctx.bezierCurveTo(L*0.3,-W,L*0.9,-W,L,-W*0.25); ctx.lineTo(L*0.86,0); ctx.lineTo(L,W*0.25);   // Kerbe an der Spitze
+        ctx.bezierCurveTo(L*0.9,W,L*0.3,W,0,0); ctx.fill();
+        ctx.strokeStyle='rgba(226,120,160,.45)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(R*0.15,0); ctx.lineTo(L*0.7,0); ctx.stroke();
+        ctx.rotate(Math.PI*2/5);
+      }
+      ctx.fillStyle='#c4426f'; ctx.beginPath(); ctx.arc(0,0,R*0.12,0,7); ctx.fill();
+      ctx.fillStyle='#f6d560';
+      for(let i=0;i<9;i++){ const a=trnd()*6.28, d=R*(0.16+trnd()*0.2); ctx.beginPath(); ctx.arc(Math.cos(a)*d,Math.sin(a)*d,R*0.035,0,7); ctx.fill(); }
+      ctx.restore();
+    };
+    for(let i=0;i<14;i++){                                     // Knospen und junge Blätter in den Lücken
+      const x=30+trnd()*(s-60), y=30+trnd()*(s-60);
+      ctx.fillStyle=i%4? '#e2678f':'#8a9a4a';
+      ctx.beginPath(); ctx.ellipse(x,y,9,6,trnd()*6.28,0,7); ctx.fill();
+    }
+    for(let r=0;r<3;r++) for(let c=0;c<3;c++)
+      flower(48+c*80+(trnd()-.5)*22, 48+r*80+(trnd()-.5)*22, 40+trnd()*8, trnd()*6.28);
+  }),
   paper: canvasTex(128,(ctx,s)=>{
     ctx.fillStyle='#fff0c4'; ctx.fillRect(0,0,s,s);
     ctx.strokeStyle='#5a3a1a'; ctx.lineWidth=5;
@@ -247,7 +271,9 @@ const M = {
   grass: std({map:T.grass, roughness:1}),
   trunk: std({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1}),
   leaf:  std({map:T.pine, roughness:1}),
-  sakura:std({map:T.blossom, roughness:1}),
+  sakura:std({map:T.blossom, alphaTest:.4, roughness:.85, vertexColors:true}),       // Blütenkärtchen, siehe sakura()
+  sakuraCore:std({color:0xdc9db2, roughness:1}),                                   // dichter Kern hinter den Kärtchen
+  sakuraBark:std({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1, color:0xcdb9b0}),
   water: new THREE.MeshStandardMaterial({color:0x3b7a9c, roughness:.1, metalness:.3}),
   glow:  std({map:T.paper, emissiveMap:T.paper, emissive:0xffa733, emissiveIntensity:0, roughness:.5}),
 };
@@ -615,11 +641,56 @@ function pine(h=6){
   }
   return g;
 }
+// Kirschbaum: kurzer Stamm, der sich in geschwungene Äste und Zweige gabelt; um die Astenden sitzen Wolken aus
+// Blütenkärtchen (alpha-getestete Quads mit T.blossom). Eigener Zufall (srnd), damit die rnd-Folge der Szene gleich bleibt.
+let sseed=3; const srnd=()=>(sseed=(sseed*16807)%2147483647)/2147483647;
 function sakura(h=5){
-  const g=new THREE.Group();
-  g.add(cyl(0.18,0.32,h*0.6,M.trunk,0,h*0.3,0,8));
-  const offs=[[0,h*0.8,0,2.3],[1.4,h*0.65,0.6,1.6],[-1.3,h*0.7,-0.5,1.7],[0.2,h*0.6,-1.4,1.5]];
-  for(const [x,y,z,r] of offs) g.add(mesh(new THREE.SphereGeometry(r,14,12),M.sakura,x,y,z));
+  const g=new THREE.Group(), V=(x,y,z)=>new THREE.Vector3(x,y,z);
+  const wood=[new THREE.CylinderGeometry(0.2,0.34,h*0.38,8).translate(0,h*0.19,0)], clumps=[];
+  for(let i=0;i<5;i++){
+    const a=i/5*Math.PI*2+srnd()*0.9, reach=1.3+srnd()*0.9, ca=Math.cos(a), sa=Math.sin(a);
+    const limb=new THREE.CatmullRomCurve3([V(0,h*0.33,0), V(ca*reach*0.4,h*0.5,sa*reach*0.4), V(ca*reach,h*(0.62+srnd()*0.18),sa*reach)]);
+    wood.push(new THREE.TubeGeometry(limb,6,0.1,5));
+    clumps.push([limb.getPoint(1),1.15+srnd()*0.35,true]);
+    for(let j=0;j<2;j++){
+      const p=limb.getPoint(0.5+srnd()*0.35), b=a+(srnd()-.5)*2.4;
+      const q=p.clone().add(V(Math.cos(b)*(0.5+srnd()*0.6),0.5+srnd()*0.7,Math.sin(b)*(0.5+srnd()*0.6)));
+      wood.push(new THREE.TubeGeometry(new THREE.LineCurve3(p,q),1,0.045,4));
+      clumps.push([q,0.75+srnd()*0.3,false]);
+    }
+  }
+  clumps.push([V(0,h*0.84,0),1.5,true]);
+  g.add(mesh(mergeGeometries(wood),M.sakuraBark));
+
+  const pos=[], nor=[], uv=[], col=[], idx=[], cores=[];
+  const mid=V(0,h*0.5,0), d=V(), n=V(), u=V(), w=V(), p=V(), c=new THREE.Color();
+  for(const [cp,r,core] of clumps){
+    if(core) cores.push(new THREE.SphereGeometry(r*0.6,8,6).scale(1,0.75,1).translate(cp.x,cp.y,cp.z));
+    for(let k=0, cnt=Math.round(42*r*r);k<cnt;k++){
+      d.set(srnd()-.5,srnd()-.5,srnd()-.5).normalize();
+      const f=0.5+0.5*Math.sqrt(srnd());                                  // dichter zur Oberfläche der Wolke hin
+      p.copy(d).multiplyScalar(r*f); p.y*=0.75; p.add(cp);
+      n.set(d.x+(srnd()-.5)*1.2,d.y+(srnd()-.5)*1.2,d.z+(srnd()-.5)*1.2).normalize();   // Kärtchen grob nach außen gedreht
+      u.set(srnd()-.5,srnd()-.5,srnd()-.5).cross(n).normalize(); w.crossVectors(n,u);
+      const sz=0.3+srnd()*0.22, i0=pos.length/3;
+      d.copy(p).sub(mid).normalize(); d.y+=0.35; d.normalize();           // Beleuchtungsnormale: von der Krone weg, etwas nach oben
+      const tone=0.66+0.34*f*(0.75+0.25*Math.min(1,Math.max(0,(p.y-cp.y)/r+0.6)));   // innen und unten dunkler
+      c.setRGB(1,0.9+srnd()*0.1,0.93+srnd()*0.07).multiplyScalar(tone);   // zwischen fast weiß und zartrosa
+      for(const [su,sv] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
+        pos.push(p.x+(u.x*su+w.x*sv)*sz, p.y+(u.y*su+w.y*sv)*sz, p.z+(u.z*su+w.z*sv)*sz);
+        nor.push(d.x,d.y,d.z); uv.push((su+1)/2,(sv+1)/2); col.push(c.r,c.g,c.b);
+      }
+      idx.push(i0,i0+1,i0+2, i0,i0+2,i0+3, i0,i0+2,i0+1, i0,i0+3,i0+2);   // beide Seiten, gleiche Normale
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+  geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+  geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  geo.setIndex(idx);
+  g.add(mesh(mergeGeometries(cores),M.sakuraCore));
+  const bl=mesh(geo,M.sakura); bl.receiveShadow=false; g.add(bl);        // Schatten auf den Kärtchen würde nur flimmern
   return g;
 }
 let seed=7; const rnd=()=> (seed=(seed*16807)%2147483647)/2147483647;
@@ -1033,31 +1104,68 @@ function makeCarl(){
   body.add(mesh(new THREE.CylinderGeometry(0.052,0.058,0.1,14),turtle,0,1.295,0));
   body.add(mesh(new THREE.CylinderGeometry(0.045,0.05,0.08,12),skin,0,1.35,0));
 
-  // Kopf: Ellipsoid (Haut/Haar), Haarschopf, Ohren und Foto als passgenaue Vorderschale
+  // Kopf: verformte Kugel (Kiefer schmaler, Hinterkopf tiefer, Nase), Foto nur auf der Vorderseite, Haarkappe mit Strähnen
   const head=new THREE.Group(); head.position.y=1.55; body.add(head);
-  const R=[0.165,0.205,0.172];
-  const headTex=ctex(256,128,(c,w,h)=>{
-    const hg=c.createLinearGradient(0,0,0,h*.6); hg.addColorStop(0,'#2e1813'); hg.addColorStop(1,'#5a3c30');   // Haarfarbe aus dem Foto: Scheitel dunkel, Seiten wärmer
-    c.fillStyle=hg; c.fillRect(0,0,w,h);
-    const gr=c.createLinearGradient(0,h*.36,0,h*.46); gr.addColorStop(0,'rgba(226,186,184,0)'); gr.addColorStop(1,'rgba(226,186,184,1)');
-    c.fillStyle=gr; c.fillRect(w*.02,h*.36,w*.46,h*.64);     // vorne (u≈0.25) unten: Haut
+  const R=[0.165,0.205,0.172], sm=THREE.MathUtils.smoothstep;
+  const headPt=(x,y,z,k=1)=>{              // Einheitsrichtung → Punkt auf dem Kopf
+    const jaw=sm(-y,-0.1,0.9);
+    let Z=z*R[2]*(z>0 ? 1-0.06*jaw : 1.1*(1-0.22*sm(-y,0.2,1)));
+    if(z>0) Z+=0.026*Math.exp(-((x+0.1)**2/0.006+(y+0.2)**2/0.012));       // Nase (liegt im Foto leicht links der Mitte)
+    return [x*R[0]*(1-0.2*jaw)*k, y*R[1]*k, Z*k];
+  };
+  const headGeo=(k,...a)=>{                // Kugel auf die Kopfform ziehen; k(x,y,z) = Abstandsfaktor der Schale
+    const geo=new THREE.SphereGeometry(1,...a), p=geo.attributes.position, unit=geo.userData.unit=p.clone(), n=geo.attributes.normal, v=new THREE.Vector3();
+    for(let i=0;i<p.count;i++){
+      const x=unit.getX(i), y=unit.getY(i), z=unit.getZ(i), q=headPt(x,y,z,k(x,y,z));
+      p.setXYZ(i,...q); v.set(q[0]/R[0]**2,q[1]/R[1]**2,q[2]/R[2]**2).normalize(); n.setXYZ(i,v.x,v.y,v.z);
+    }
+    return geo;
+  };
+  // Haaransatz als Höhe y über dem Winkel a zur Blickrichtung: Stirn, Schläfe/über dem Ohr, Nacken
+  const hairY=a=>0.62-0.54*sm(a,0.7,1.12)-0.66*sm(a,1.62,2.15);
+  const HAIR=['#1c1412','#291414','#382114','#3a2622','#46362f','#5a3c30','#624846','#694f4a','#734c34'];   // aus dem Foto
+  let hseed=5; const hrnd=()=>(hseed=(hseed*16807)%2147483647)/2147483647;   // eigener Generator, damit trnd/rnd unberührt bleiben
+  const hairCv=document.createElement('canvas'); hairCv.width=1024; hairCv.height=512;
+  {
+    const c=hairCv.getContext('2d'), w=1024, h=512;
+    const lineY=px=>{ let a=Math.abs(px/w-0.25)*Math.PI*2; if(a>Math.PI) a=Math.PI*2-a; return Math.acos(hairY(a))/Math.PI*h; };
+    c.fillStyle='#3a2622'; c.beginPath(); c.moveTo(0,0);
+    for(let x=0;x<=w;x+=4) c.lineTo(x,lineY(x)-5);
+    c.lineTo(w,0); c.fill();
+    c.lineCap='round';
+    for(let i=0;i<2600;i++){               // Strähnen vom Wirbel bis über den Ansatz hinaus → ausgefranster Rand
+      const x0=hrnd()*w, y1=lineY(x0)+hrnd()*16-4, y0=Math.max(0,y1-30-hrnd()*hrnd()*y1*1.3), dx=(hrnd()-.5)*26;
+      c.strokeStyle=HAIR[Math.floor(hrnd()*HAIR.length)]; c.globalAlpha=0.55+hrnd()*0.45; c.lineWidth=1.5+hrnd()*3;
+      for(const o of [0,w,-w]){ c.beginPath(); c.moveTo(x0+o,y0); c.quadraticCurveTo(x0+o+dx*0.2,(y0+y1)/2,x0+o+dx,y1); c.stroke(); }
+    }
+    c.globalAlpha=1; c.globalCompositeOperation='source-atop';             // Scheitel dunkler, wie im Foto
+    const dg=c.createLinearGradient(0,0,0,h*0.4); dg.addColorStop(0,'rgba(20,10,8,.6)'); dg.addColorStop(1,'rgba(20,10,8,0)');
+    c.fillStyle=dg; c.fillRect(0,0,w,h);
+  }
+  const hairTex=new THREE.CanvasTexture(hairCv); hairTex.colorSpace=THREE.SRGBColorSpace; hairTex.anisotropy=8;
+  const headTex=ctex(1024,512,(c,w,h)=>{   // Schädel: Haut, darauf dieselben Haare (unter der Kappe scheint nie Haut durch)
+    c.fillStyle='#e2bab8'; c.fillRect(0,0,w,h); c.drawImage(hairCv,0,0);
   });
   const headM=new THREE.MeshStandardMaterial({map:headTex,roughness:.95,emissive:0xffffff,emissiveMap:headTex});
-  const hs=mesh(new THREE.SphereGeometry(1,32,24),headM,0,0,0); hs.scale.set(...R); head.add(hs);
-  const hairTex=ctex(8,64,(c,w,h)=>{       // Verlauf wie im Foto: am Scheitel fast schwarzbraun, zum Rand rötlich-braun
-    const hg=c.createLinearGradient(0,0,0,h*.42); hg.addColorStop(0,'#2e1813'); hg.addColorStop(1,'#5a3c30');
-    c.fillStyle=hg; c.fillRect(0,0,w,h);
-  });
-  const hairM=new THREE.MeshStandardMaterial({map:hairTex,roughness:1,emissive:0xffffff,emissiveMap:hairTex});
-  const hair=mesh(new THREE.SphereGeometry(1,28,14,0,Math.PI*2,0,1.32),hairM,0,0.004,-0.006);
-  hair.scale.set(R[0]*1.06,R[1]*1.05,R[2]*1.06); hair.rotation.x=-0.5; head.add(hair);
-  for(const sx of [-1,1]){ const e=mesh(new THREE.SphereGeometry(1,10,8),skin,sx*R[0]*0.98,-0.015,-0.008); e.scale.set(0.016,0.036,0.024); head.add(e); }
-  const fg=new THREE.SphereGeometry(1,36,28,Math.PI/2-1.45,2.9,0.12,Math.PI-0.24), fp=fg.attributes.position, fu=fg.attributes.uv;
-  for(let i=0;i<fp.count;i++) fu.setXY(i,0.5+fp.getX(i)/2,0.5+fp.getY(i)/2);   // Foto von vorn projizieren
+  head.add(mesh(headGeo(()=>1,48,36),headM,0,0,0));
+  const hairM=new THREE.MeshStandardMaterial({map:hairTex,roughness:1,emissive:0xffffff,emissiveMap:hairTex,alphaTest:.5});
+  // Kappe: am Ansatz dünn, oben und hinten dicker, leicht zerzaust
+  head.add(mesh(headGeo((x,y,z)=>1.012+0.055*sm(y-hairY(Math.atan2(Math.abs(x),z)),0,0.45)+0.008*Math.sin(x*23+y*17)*Math.sin(z*19-y*11),64,40),hairM,0,0,0));
+  for(const sx of [-1,1]){
+    const e=mesh(new THREE.SphereGeometry(1,12,10),skin,...headPt(sx*0.992,-0.08,-0.1)); e.scale.set(0.014,0.04,0.026); e.rotation.y=sx*0.4; head.add(e);
+  }
+  // Foto von vorn projiziert; zu den Seiten ausgeblendet, damit es dort nicht verschmiert
+  const fg=headGeo(()=>1.012,40,30,Math.PI/2-1.3,2.6,0.1,Math.PI-0.2), fp=fg.attributes.position, fu=fg.attributes.uv, fd=fg.userData.unit, fc=[];
+  for(let i=0;i<fp.count;i++){
+    const x=fp.getX(i)/(R[0]*1.012), y=fp.getY(i)/(R[1]*1.012);
+    fu.setXY(i,0.5+x/2,0.5+y/2);
+    fc.push(1,1,1,1-sm(Math.atan2(Math.abs(fd.getX(i)),fd.getZ(i)),0.7,1.1));
+  }
+  fg.setAttribute('color',new THREE.Float32BufferAttribute(fc,4));
   const faceTex=new THREE.TextureLoader().load('face.png'); faceTex.colorSpace=THREE.SRGBColorSpace; faceTex.anisotropy=8;
-  const faceM=new THREE.MeshStandardMaterial({map:faceTex,emissive:0xffffff,emissiveMap:faceTex,roughness:.9,
+  const faceM=new THREE.MeshStandardMaterial({map:faceTex,emissive:0xffffff,emissiveMap:faceTex,roughness:.9,vertexColors:true,
     transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
-  const face=new THREE.Mesh(fg,faceM); face.scale.set(R[0]*1.012,R[1]*1.012,R[2]*1.012); head.add(face);
+  head.add(new THREE.Mesh(fg,faceM));
   carlGlow.push(headM,hairM,faceM);
 
   // Arme: Schulter + Ellbogen
