@@ -28,7 +28,7 @@ The origin is the centre of the precinct. +Z is "front" (towards the viewer at s
 | Main hall | centred at (0, −8) | details below |
 | Lantern avenue | 14 stone lanterns at x = ±3.4, z = 8 to 33.2, every 4.2 | plus two larger ones at (±9, 5) |
 | Torii | large at z = 42, a 0.7-scale one at z = 28 | both straddle the path |
-| Pond | ellipse centred (16, 12), radius 7 in x, 0.7 of that in z | stone rim |
+| Pond | ellipse centred (16, 12), radius 7 in x, 0.7 of that in z | stone rim; the water's normal is perturbed in the fragment shader by a moving wave height field |
 | Bridge | arched plank bridge across the pond, x = 10 to 22 at z = 12 | rail posts at z = ±1 from the centre line |
 | Tokyo Tower | (−26, −4) | about 34 units tall |
 | Osaka Castle keep | (32, −6) | scaled-down model, about 13 units tall |
@@ -55,7 +55,7 @@ Carl is the centre of the scene, so spend effort here.
 - **Head.** An ellipsoid with ears and a hair cap. Project the face photo from the front onto a sphere cap that sits just over the head, with a soft elliptical alpha edge so it blends into the skin and hair. Sample the hair colour from the photo. Give the head materials a little emissive so the face reads like the photo in daylight, and dim that at night and in rain.
 - **Preparing `face.png`.** Crop the photo to the head's bounding box, soften any colour cast slightly, apply the elliptical alpha fade, save at about 256 × 324.
 - **Gait.** One function drives walking through jogging from a single speed value. As speed rises: longer leg swing, more knee lift, bent elbows, forward lean, a short flight phase. Tie step frequency to stride length so the feet do not slide. Each frame, find the lowest point of either shoe sole (heel and toe) and place Carl so that point touches the ground. When he stops, ease into a standing pose.
-- **Footsteps.** On every footstrike: a small dust puff if the foot is on gravel (a pool of fading sprites), and a short synthesised sound that depends on the surface: crunch on gravel, click on stone, hollow thump on the bridge, soft on grass. Quieter with camera distance.
+- **Footsteps.** On every footstrike: a small dust puff if the foot is on gravel (one instanced billboard mesh; the vertex shader computes each puff's flight from its start, velocity and birth time), and a short synthesised sound that depends on the surface: crunch on gravel, click on stone, hollow thump on the bridge, soft on grass. Quieter with camera distance.
 
 ## Ground height and getting around
 
@@ -75,7 +75,7 @@ Three more fallow deer (two bucks with antlers, one doe) and a giraffe walk thei
 
 - **Sky dome.** A camera-centred sphere with a shader: gradient from horizon to zenith, sun (moon at night), stars at night, and procedural fBm-noise clouds that drift slowly and are lit from the sun side. The horizon colour equals the fog colour.
 - **Night.** Sky, fog and lights blend smoothly. Stone lanterns and the hall's paper lanterns glow and cast warm point lights.
-- **Rain.** About 8000 falling streaks, greyer sky, thicker cloud, closer fog, almost no dust from Carl's feet.
+- **Rain.** About 8000 falling streaks animated entirely in the vertex shader (static start points, fall and wind from a time uniform, wrapped in a box around the camera), ripple rings on the pond, greyer sky, thicker cloud, closer fog, almost no dust from Carl's feet.
 
 ## Controls
 
