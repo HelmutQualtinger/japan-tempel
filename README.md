@@ -2,17 +2,23 @@
 
 [Deutsch](#japanischer-tempel--3d) · [English](#japanese-temple--3d) · [Italiano](#tempio-giapponese--3d) · [日本語](#日本の寺--3d)
 
+[![Screenshot: Tempelhalle mit Steinlaternen und Kirschbäumen, davor joggt Carl](preview.jpg)](https://helmutqualtinger.github.io/japan-tempel/)
+
 Eine navigierbare 3D-Szene eines japanischen Tempels im Browser, gebaut mit [three.js](https://threejs.org/). Alles steckt in einer einzigen Datei: `tempel.html`.
 
 ## Starten
 
-Die Seite lädt three.js per CDN (jsdelivr) und braucht deshalb Internet. Sie muss über HTTP ausgeliefert werden, nicht per `file://`.
+Die Seite lädt three.js per CDN (jsdelivr) und braucht deshalb beim ersten Aufruf Internet; danach hält ein Service Worker (`sw.js`) alles im Cache, und die Szene läuft auch offline. Sie muss über HTTP ausgeliefert werden, nicht per `file://`.
 
 ```bash
 python3 -m http.server 8757
 ```
 
 Danach im Browser öffnen: <http://localhost:8757/tempel.html>
+
+### Als App auf Android oder iOS installieren
+
+Die Szene ist eine installierbare Web-App (PWA). <https://helmutqualtinger.github.io/japan-tempel/> in Chrome öffnen, dann im Menü (⋮) **App installieren** bzw. **Zum Startbildschirm hinzufügen** wählen. Auf iPhone/iPad die Seite in Safari öffnen, auf **Teilen** tippen und **Zum Home-Bildschirm** wählen. Sie startet danach im Vollbild mit eigenem Icon und funktioniert offline.
 
 ## Bedienung
 
@@ -53,13 +59,17 @@ A navigable 3D scene of a Japanese temple in the browser, built with [three.js](
 
 ## Running
 
-The page loads three.js from a CDN (jsdelivr), so it needs an internet connection. It must be served over HTTP, not opened via `file://`.
+The page loads three.js from a CDN (jsdelivr), so it needs an internet connection on the first visit; after that a service worker (`sw.js`) keeps everything cached and the scene also runs offline. It must be served over HTTP, not opened via `file://`.
 
 ```bash
 python3 -m http.server 8757
 ```
 
 Then open in the browser: <http://localhost:8757/tempel.html>
+
+### Installing as an app on Android or iOS
+
+The scene is an installable web app (PWA). Open <https://helmutqualtinger.github.io/japan-tempel/> in Chrome, then choose **Install app** or **Add to Home screen** from the menu (⋮). On iPhone/iPad open the page in Safari, tap **Share** and choose **Add to Home Screen**. It then launches fullscreen with its own icon and works offline.
 
 ## Controls
 
@@ -102,13 +112,17 @@ Una scena 3D navigabile di un tempio giapponese nel browser, realizzata con [thr
 
 ## Avvio
 
-La pagina carica three.js da una CDN (jsdelivr) e richiede quindi una connessione a Internet. Deve essere servita via HTTP, non aperta tramite `file://`.
+La pagina carica three.js da una CDN (jsdelivr) e richiede quindi una connessione a Internet alla prima visita; in seguito un service worker (`sw.js`) tiene tutto in cache e la scena funziona anche offline. Deve essere servita via HTTP, non aperta tramite `file://`.
 
 ```bash
 python3 -m http.server 8757
 ```
 
 Poi aprire nel browser: <http://localhost:8757/tempel.html>
+
+### Installare come app su Android o iOS
+
+La scena è una web app installabile (PWA). Aprire <https://helmutqualtinger.github.io/japan-tempel/> in Chrome, poi scegliere **Installa app** o **Aggiungi a schermata Home** dal menu (⋮). Su iPhone/iPad aprire la pagina in Safari, toccare **Condividi** e scegliere **Aggiungi alla schermata Home**. Si avvia quindi a schermo intero con la propria icona e funziona offline.
 
 ## Comandi
 
@@ -151,13 +165,17 @@ Tutte le texture (pietra, legno, tegole, erba, corteccia, fogliame, carta) vengo
 
 ## 起動方法
 
-three.js を CDN（jsdelivr）から読み込むため、インターネット接続が必要です。`file://` で直接開くのではなく、HTTP 経由で配信してください。
+three.js を CDN（jsdelivr）から読み込むため、初回のみインターネット接続が必要です。以降はサービスワーカー（`sw.js`）がすべてをキャッシュし、オフラインでも動作します。`file://` で直接開くのではなく、HTTP 経由で配信してください。
 
 ```bash
 python3 -m http.server 8757
 ```
 
 その後、ブラウザで開きます: <http://localhost:8757/tempel.html>
+
+### Android・iOS にアプリとしてインストール
+
+このシーンはインストール可能なウェブアプリ（PWA）です。Chrome で <https://helmutqualtinger.github.io/japan-tempel/> を開き、メニュー（⋮）から **アプリをインストール** または **ホーム画面に追加** を選びます。iPhone／iPad では Safari でページを開き、**共有** をタップして **ホーム画面に追加** を選びます。以降は専用アイコンから全画面で起動し、オフラインでも動作します。
 
 ## 操作方法
 

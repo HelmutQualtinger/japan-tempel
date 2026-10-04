@@ -17,6 +17,8 @@ python3 -m http.server 8757   # from this directory; avoid port 5000 (macOS AirP
 
 Published via GitHub Pages at https://helmutqualtinger.github.io/japan-tempel/ (`index.html` redirects to `tempel.html`). Both pages carry Open Graph/Twitter tags pointing at `preview.jpg` (1200×630 screenshot with title overlay) — retake it when the scene changes noticeably.
 
+**PWA (installable on Android and iOS, offline-capable):** `manifest.webmanifest` (start_url `tempel.html`, `display: fullscreen`, icons `icon-192.png`/`icon-512.png`/`icon-maskable-512.png` — a torii drawn with Pillow), iOS extras in the `<head>` of `tempel.html` (`apple-touch-icon.png` 180×180, `apple-mobile-web-app-*` metas; `black-translucent` status bar + `viewport-fit=cover`, so `#hud`/`#btns` are offset by `env(safe-area-inset-*)`) and `sw.js`, registered by an inline script in `tempel.html`. The service worker precaches the local files plus the three CDN modules; same-origin requests are network-first (cache fallback), CDN requests cache-first. When changing the three.js version or adding an `three/addons` import or a new local asset, update the `CDN`/`REMOTE`/`LOCAL` lists in `sw.js` and bump `CACHE` (`tempel-v2`), otherwise the app breaks offline.
+
 ## Architecture of tempel.html
 
 Everything is one `<script type="module">`, top to bottom in dependency order — later sections reference helpers and materials defined earlier, so keep that order when inserting code:
