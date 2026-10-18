@@ -55,7 +55,7 @@
 <div id="hud"><h1>Japanischer Tempel</h1><p>Ziehen: drehen · Scrollen: zoomen · Rechtsklick/Shift: verschieben · Klick auf den Boden: Carl läuft dorthin</p></div>
 <div id="btns">
   <button id="carlBtn" aria-pressed="false">Carl folgen</button>
-  <label id="speed" title="Carls Tempo"><span>Tempo</span><input id="speedIn" type="range" min="0" max="7" step="0.1" value="3.2" aria-label="Carls Tempo"></label>
+  <label id="speed" title="Carls Tempo"><span>Tempo</span><input id="speedIn" type="range" min="0" max="14" step="0.1" value="3.2" aria-label="Carls Tempo"></label>
   <button id="rainBtn" aria-pressed="false">Regen</button>
   <button id="dayBtn" aria-pressed="false">Nacht</button>
   <button id="rotBtn" aria-pressed="false">Auto-Rotation</button>
@@ -270,7 +270,7 @@ const M = {
   gravel:std({map:T.gravel, roughness:1}),
   grass: std({map:T.grass, roughness:1}),
   trunk: std({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1}),
-  leaf:  std({map:T.pine, roughness:1}),
+  leaf:  std({map:T.pine, roughness:1, vertexColors:true}),   // siehe pine()
   sakura:std({map:T.blossom, alphaTest:.4, roughness:.85, vertexColors:true}),       // Blütenkärtchen, siehe sakura()
   sakuraCore:std({color:0xdc9db2, roughness:1}),                                   // dichter Kern hinter den Kärtchen
   sakuraBark:std({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1, color:0xcdb9b0}),
@@ -632,55 +632,83 @@ for(const sz of [-1,1]) for(let i=0;i<=10;i+=2){
 bridge.position.set(16,0,12); scene.add(bridge);
 
 // ---------- Bäume ----------
-function pine(h=6){
-  const g=new THREE.Group();
-  g.add(cyl(0.2,0.35,h*0.4,M.trunk,0,h*0.2,0,8));
-  for(let i=0;i<3;i++){
-    const c=mesh(new THREE.ConeGeometry(2.0-i*0.5,h*0.45,10),M.leaf,0,h*0.4+i*h*0.22+h*0.2,0);
-    g.add(c);
-  }
-  return g;
-}
-// Kirschbaum: kurzer Stamm, der sich in geschwungene Äste und Zweige gabelt; um die Astenden sitzen Wolken aus
-// Blütenkärtchen (alpha-getestete Quads mit T.blossom). Eigener Zufall (srnd), damit die rnd-Folge der Szene gleich bleibt.
+// Kirschbaum: kurzer Stamm, der sich fraktal in Äste → Zweige → Triebe gabelt. Jeder Ast wird von 3D-Wertrauschen
+// (vnoise) geknickt und hängt unter seinem Gewicht durch (y -= a·t², stärker bei langen, flachen Ästen). Kinder und
+// Blüten sitzen im goldenen Winkel (≈137,5°), die Blütenwolken an den Astenden sind Fibonacci-Kugeln aus
+// Blütenkärtchen (alpha-getestete Quads mit T.blossom); jeder Hauptast hat einen eigenen Rosaton, der an die Zweige
+// vererbt wird. Eigener Zufall (srnd), damit die rnd-Folge der Szene gleich bleibt.
 let sseed=3; const srnd=()=>(sseed=(sseed*16807)%2147483647)/2147483647;
+const GOLD=Math.PI*(3-Math.sqrt(5));
+const nHash=(x,y,z)=>{ const s=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453; return s-Math.floor(s); };
+function vnoise(x,y,z){                                                    // glattes Wertrauschen, -1…1
+  const xi=Math.floor(x), yi=Math.floor(y), zi=Math.floor(z), f=t=>t*t*(3-2*t), L=(a,b,t)=>a+(b-a)*t;
+  const u=f(x-xi), v=f(y-yi), w=f(z-zi), h=(i,j,k)=>nHash(xi+i,yi+j,zi+k);
+  return L(L(L(h(0,0,0),h(1,0,0),u),L(h(0,1,0),h(1,1,0),u),v), L(L(h(0,0,1),h(1,0,1),u),L(h(0,1,1),h(1,1,1),u),v), w)*2-1;
+}
 function sakura(h=5){
-  const g=new THREE.Group(), V=(x,y,z)=>new THREE.Vector3(x,y,z);
-  const wood=[new THREE.CylinderGeometry(0.2,0.34,h*0.38,8).translate(0,h*0.19,0)], clumps=[];
-  for(let i=0;i<5;i++){
-    const a=i/5*Math.PI*2+srnd()*0.9, reach=1.3+srnd()*0.9, ca=Math.cos(a), sa=Math.sin(a);
-    const limb=new THREE.CatmullRomCurve3([V(0,h*0.33,0), V(ca*reach*0.4,h*0.5,sa*reach*0.4), V(ca*reach,h*(0.62+srnd()*0.18),sa*reach)]);
-    wood.push(new THREE.TubeGeometry(limb,6,0.1,5));
-    clumps.push([limb.getPoint(1),1.15+srnd()*0.35,true]);
-    for(let j=0;j<2;j++){
-      const p=limb.getPoint(0.5+srnd()*0.35), b=a+(srnd()-.5)*2.4;
-      const q=p.clone().add(V(Math.cos(b)*(0.5+srnd()*0.6),0.5+srnd()*0.7,Math.sin(b)*(0.5+srnd()*0.6)));
-      wood.push(new THREE.TubeGeometry(new THREE.LineCurve3(p,q),1,0.045,4));
-      clumps.push([q,0.75+srnd()*0.3,false]);
+  const g=new THREE.Group(), V=(x,y,z)=>new THREE.Vector3(x,y,z), ox=srnd()*100;
+  const wood=[new THREE.CylinderGeometry(0.2,0.34,h*0.38,8).translate(0,h*0.19,0)], clumps=[], sprigs=[];
+  function branch(p0,dir,len,rad,depth,tint){
+    const side=V(0,1,0).cross(dir); if(side.lengthSq()<1e-4) side.set(1,0,0); side.normalize();
+    const up=V().crossVectors(dir,side), sag=0.08*len*len*Math.hypot(dir.x,dir.z), pts=[];
+    for(let i=0;i<=6;i++){
+      const t=i/6, q=p0.clone().addScaledVector(dir,len*t), a=len*0.14*t, s=1.1/len;
+      q.addScaledVector(side,vnoise(q.x*s+ox,q.y*s,q.z*s)*a).addScaledVector(up,vnoise(q.x*s,q.y*s+ox,q.z*s+7)*a);
+      q.y-=sag*t*t; pts.push(q);
+    }
+    const curve=new THREE.CatmullRomCurve3(pts), end=curve.getPoint(1);
+    wood.push(new THREE.TubeGeometry(curve,8,rad,depth<2?5:4));
+    if(depth===2){ clumps.push([end,0.55+srnd()*0.2,false,tint,depth]); sprigs.push([curve,tint]); return; }
+    if(depth===1) clumps.push([end,0.85+srnd()*0.25,true,tint,depth]);
+    let az=srnd()*Math.PI*2;
+    for(let j=0, kids=depth?2:3;j<kids;j++){
+      az+=GOLD;                                                            // Abzweige im goldenen Winkel um den Ast
+      const t=0.45+0.5*(j+0.5)/kids+(srnd()-.5)*0.1, tan=curve.getTangent(t), tilt=0.6+srnd()*0.35;
+      const d=tan.multiplyScalar(Math.cos(tilt)).addScaledVector(side,Math.cos(az)*Math.sin(tilt)).addScaledVector(up,Math.sin(az)*Math.sin(tilt));
+      d.y+=0.35; d.normalize();                                            // zum Licht hin
+      branch(curve.getPoint(t),d,len*(0.5+srnd()*0.15),rad*0.55,depth+1,tint+(srnd()-.5)*0.15);
     }
   }
-  clumps.push([V(0,h*0.84,0),1.5,true]);
-  g.add(mesh(mergeGeometries(wood),M.sakuraBark));
+  for(let i=0;i<5;i++){
+    const a=i/5*Math.PI*2+srnd()*0.9, el=0.62+srnd()*0.3;
+    branch(V(0,h*0.33,0),V(Math.cos(a)*Math.cos(el),Math.sin(el),Math.sin(a)*Math.cos(el)),h*(0.4+srnd()*0.1),0.12,0,srnd());
+  }
+  clumps.push([V(0,h*0.8,0),1.1,true,0.5,0]);
+  const bark=mesh(mergeGeometries(wood),M.sakuraBark); bark.customDepthMaterial=sakuraDepth.wood; g.add(bark);
 
   const pos=[], nor=[], uv=[], col=[], idx=[], cores=[];
   const mid=V(0,h*0.5,0), d=V(), n=V(), u=V(), w=V(), p=V(), c=new THREE.Color();
-  for(const [cp,r,core] of clumps){
+  function card(sz,tone,pink){                                             // Kärtchen bei p, grob nach n gedreht
+    u.set(srnd()-.5,srnd()-.5,srnd()-.5).cross(n).normalize(); w.crossVectors(n,u);
+    const i0=pos.length/3;
+    d.copy(p).sub(mid).normalize(); d.y+=0.35; d.normalize();             // Beleuchtungsnormale: von der Krone weg, etwas nach oben
+    pink=Math.min(1,Math.max(0,pink-0.3*(p.y-h*0.6)/h+(srnd()-.5)*0.15));  // oben ausgeblichen, unten rosiger
+    c.setRGB(1,0.97-0.11*pink,0.985-0.06*pink).multiplyScalar(tone);
+    for(const [su,sv] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
+      pos.push(p.x+(u.x*su+w.x*sv)*sz, p.y+(u.y*su+w.y*sv)*sz, p.z+(u.z*su+w.z*sv)*sz);
+      nor.push(d.x,d.y,d.z); uv.push((su+1)/2,(sv+1)/2); col.push(c.r,c.g,c.b);
+    }
+    idx.push(i0,i0+1,i0+2, i0,i0+2,i0+3, i0,i0+2,i0+1, i0,i0+3,i0+2);   // beide Seiten, gleiche Normale
+  }
+  for(const [cp,r,core,tint,depth] of clumps){
     if(core) cores.push(new THREE.SphereGeometry(r*0.6,8,6).scale(1,0.75,1).translate(cp.x,cp.y,cp.z));
-    for(let k=0, cnt=Math.round(42*r*r);k<cnt;k++){
-      d.set(srnd()-.5,srnd()-.5,srnd()-.5).normalize();
+    const cnt=Math.round(34*r*r), ph=srnd()*Math.PI*2;
+    for(let k=0;k<cnt;k++){
+      const y=1-2*(k+0.5)/cnt, rr=Math.sqrt(1-y*y), th=k*GOLD+ph+(srnd()-.5)*0.4;   // Fibonacci-Kugel: lückenlos, ohne Raster
+      d.set(Math.cos(th)*rr,y,Math.sin(th)*rr);
       const f=0.5+0.5*Math.sqrt(srnd());                                  // dichter zur Oberfläche der Wolke hin
       p.copy(d).multiplyScalar(r*f); p.y*=0.75; p.add(cp);
-      n.set(d.x+(srnd()-.5)*1.2,d.y+(srnd()-.5)*1.2,d.z+(srnd()-.5)*1.2).normalize();   // Kärtchen grob nach außen gedreht
-      u.set(srnd()-.5,srnd()-.5,srnd()-.5).cross(n).normalize(); w.crossVectors(n,u);
-      const sz=0.3+srnd()*0.22, i0=pos.length/3;
-      d.copy(p).sub(mid).normalize(); d.y+=0.35; d.normalize();           // Beleuchtungsnormale: von der Krone weg, etwas nach oben
+      n.set(d.x+(srnd()-.5)*1.2,d.y+(srnd()-.5)*1.2,d.z+(srnd()-.5)*1.2).normalize();
       const tone=0.66+0.34*f*(0.75+0.25*Math.min(1,Math.max(0,(p.y-cp.y)/r+0.6)));   // innen und unten dunkler
-      c.setRGB(1,0.9+srnd()*0.1,0.93+srnd()*0.07).multiplyScalar(tone);   // zwischen fast weiß und zartrosa
-      for(const [su,sv] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
-        pos.push(p.x+(u.x*su+w.x*sv)*sz, p.y+(u.y*su+w.y*sv)*sz, p.z+(u.z*su+w.z*sv)*sz);
-        nor.push(d.x,d.y,d.z); uv.push((su+1)/2,(sv+1)/2); col.push(c.r,c.g,c.b);
-      }
-      idx.push(i0,i0+1,i0+2, i0,i0+2,i0+3, i0,i0+2,i0+1, i0,i0+3,i0+2);   // beide Seiten, gleiche Normale
+      card(0.28+srnd()*0.2,tone,tint*0.7+(depth===2?0.25:0));             // junge Triebspitzen rosiger
+    }
+  }
+  for(const [curve,tint] of sprigs){                                       // einzelne Blüten entlang der Triebe
+    for(let k=0;k<7;k++){
+      const t=0.25+0.65*k/7, tan=curve.getTangent(t);
+      n.set(0,1,0).cross(tan).normalize().applyAxisAngle(tan,k*GOLD);
+      p.copy(curve.getPoint(t)).addScaledVector(n,0.07);
+      card(0.16+srnd()*0.06,0.9,tint*0.7+0.3);
     }
   }
   const geo=new THREE.BufferGeometry();
@@ -689,8 +717,66 @@ function sakura(h=5){
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
   geo.setIndex(idx);
-  g.add(mesh(mergeGeometries(cores),M.sakuraCore));
-  const bl=mesh(geo,M.sakura); bl.receiveShadow=false; g.add(bl);        // Schatten auf den Kärtchen würde nur flimmern
+  const core=mesh(mergeGeometries(cores),M.sakuraCore); core.customDepthMaterial=sakuraDepth.wood; g.add(core);
+  const bl=mesh(geo,M.sakura); bl.receiveShadow=false; bl.customDepthMaterial=sakuraDepth.blossom; g.add(bl);        // Schatten auf den Kärtchen würde nur flimmern
+  return g;
+}
+// Wind für die Kirschbäume: Stamm, Äste, Kern und Blüten wiegen sich im Vertex-Shader. Der Ausschlag wächst
+// quadratisch mit der Höhe, dazu kommt ein schnelleres, ortsabhängiges Flattern, damit Äste und Blütenwolken einzeln
+// nicken. Alle Teile verschieben mit derselben Funktion der Objektkoordinaten, deshalb bleiben die Blüten an ihren
+// Zweigen; die Schatten bewegen sich über eigene Tiefenmaterialien mit. Bei Regen stärker (windU.uGust).
+const windU={uTime:{value:0},uGust:{value:1}};
+function sway(m){
+  m.onBeforeCompile=sh=>{
+    Object.assign(sh.uniforms,windU);
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uTime,uGust;')
+      .replace('#include <begin_vertex>',`#include <begin_vertex>
+      {
+        vec3 o=modelMatrix[3].xyz; float ph=dot(o.xz,vec2(0.13,0.21));
+        float h=max(transformed.y-1.0,0.0)*0.2, b=h*h*0.4*uGust;
+        vec3 wd=normalize((vec4(-1.0,0.0,0.35,0.0)*modelMatrix).xyz);   // Windrichtung (Welt) in Objektkoordinaten
+        float s=0.05+0.6*sin(uTime*1.1+ph)+0.25*sin(uTime*2.3+ph*1.7);  // ganzer Baum
+        float f=0.5*sin(uTime*3.7+ph+dot(transformed,vec3(1.3,0.7,1.1)));   // einzelne Äste
+        transformed+=(wd*(s+f*0.5)+cross(wd,vec3(0.0,1.0,0.0))*f)*b;
+        transformed.y-=abs(s)*0.25*b;
+      }`);
+  };
+  return m;
+}
+[M.sakura,M.sakuraCore,M.sakuraBark].forEach(sway);
+const swayDepth=(map,alphaTest=0)=>sway(new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,map,alphaTest}));
+const sakuraDepth={wood:swayDepth(null), blossom:swayDepth(T.blossom,0.4)};
+
+// Kiefer: sich verjüngender Stamm, der sich leicht neigt und per vnoise windet; darauf 4–7 Nadeletagen – Kegel, deren
+// Mantel per vnoise ausgebeult ist und deren Rand durchhängt, jede etwas verschoben, gekippt und eigen eingefärbt
+// (unten und innen dunkler). Eigener Zufall (prnd), damit die rnd-Folge der Szene gleich bleibt.
+let pseed=5; const prnd=()=>(pseed=(pseed*16807)%2147483647)/2147483647;
+function pine(h=6){
+  const g=new THREE.Group(), ox=prnd()*100, lean=(prnd()-.5)*0.1*h, la=prnd()*Math.PI*2;
+  const bend=y=>{ const t=y/h, w=0.3*t*h/6; return [Math.cos(la)*lean*t*t+vnoise(ox,y*0.5,0)*w, Math.sin(la)*lean*t*t+vnoise(0,y*0.5,ox)*w]; };
+  const trunk=new THREE.CylinderGeometry(0.08,0.28+h*0.012,h*0.95,8,8).translate(0,h*0.475,0), tp=trunk.attributes.position;
+  for(let i=0;i<tp.count;i++){ const [bx,bz]=bend(tp.getY(i)); tp.setX(i,tp.getX(i)+bx); tp.setZ(i,tp.getZ(i)+bz); }
+  trunk.computeVertexNormals();
+  g.add(mesh(trunk,M.trunk));
+  const tiers=4+Math.floor(prnd()*4), cones=[], c=new THREE.Color(), base=0.95+prnd()*0.35, warm=(prnd()-.5)*0.12;
+  for(let i=0;i<tiers;i++){
+    const t=i/(tiers-1), y=h*(0.42+0.62*t)+(prnd()-.5)*h*0.05;
+    const r=(2.1-1.6*t)*(0.8+prnd()*0.4)*(0.8+h*0.04), ch=h*(0.4-0.14*t)*(0.85+prnd()*0.3), k=1.4/r;
+    const geo=new THREE.ConeGeometry(r,ch,18,5), p=geo.attributes.position, col=[];
+    for(let j=0;j<p.count;j++){
+      const x=p.getX(j), vy=p.getY(j), z=p.getZ(j), rad=Math.hypot(x,z)/r;
+      const s=1+0.28*vnoise(x*k+ox+i*9,vy*k,z*k)+0.14*vnoise(x*k*3,vy*k*3+ox,z*k*3+i);                           // ausgebeulter, ungleichmäßiger Mantel
+      p.setXYZ(j,x*s,vy-rad*rad*ch*0.18*(0.6+0.4*vnoise(z*k,ox+i,x*k)),z*s);   // äußerer Rand hängt durch
+      const tone=base*(0.62+0.25*t+0.25*(vy/ch+0.5))*(0.9+0.2*nHash(x,vy,z+i));
+      c.setRGB(tone*(1+warm),tone,tone*(1-warm)); col.push(c.r,c.g,c.b);
+    }
+    geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+    geo.rotateX((prnd()-.5)*0.2).rotateZ((prnd()-.5)*0.2).rotateY(prnd()*Math.PI*2);
+    const [bx,bz]=bend(y);
+    geo.translate(bx+(prnd()-.5)*0.25*r,y,bz+(prnd()-.5)*0.25*r);
+    geo.computeVertexNormals(); cones.push(geo);
+  }
+  g.add(mesh(mergeGeometries(cones),M.leaf));
   return g;
 }
 let seed=7; const rnd=()=> (seed=(seed*16807)%2147483647)/2147483647;
@@ -1494,11 +1580,12 @@ function updateCarl(dt){
   const tr=d.trail, last=tr[tr.length-1];                                 // Spur für den Hirsch
   if(!last || (p.x-last.x)**2+(p.z-last.z)**2>0.09){ tr.push({x:p.x,z:p.z}); if(tr.length>3000) tr.shift(); }
   const prev=d.phase, run=Math.min(1,Math.max(0,(v-1)/2.2));              // 0 = Gehen, 1 = Joggen (Regler)
-  const A0=0.34+0.28*run, A=A0*mv;                                        // Schwungweite der Beine
-  if(moving) d.phase+=v*dt*Math.PI/(2*0.78*Math.sin(A0)*S*(1+0.265*run)); // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
+  const sp=Math.min(1,Math.max(0,(v-3.2)/7));                            // 0 = Joggen, 1 = Sprint
+  const A0=0.34+0.28*run+0.3*sp, A=A0*mv;                                        // Schwungweite der Beine
+  if(moving) d.phase+=v*dt*Math.PI/(2*0.78*Math.sin(A0)*S*(1+0.265*run+0.45*sp)); // Schrittfrequenz passend zur Schrittlänge (keine rutschenden Füße)
   const s=Math.sin(d.phase), c=Math.cos(d.phase);
   // Bein 0 schwingt mit s nach vorn, Bein 1 gegengleich; das vorschwingende Bein winkelt an (beim Joggen stark)
-  const kb=0.7+0.55*run, kick=0.35*run;
+  const kb=0.7+0.55*run+0.55*sp, kick=0.35*run+0.6*sp;
   const a=[A*s,-A*s], kn=[mv*(0.12+0.08*run+kb*Math.max(0,c)+kick*Math.max(0,-s)), mv*(0.12+0.08*run+kb*Math.max(0,-c)+kick*Math.max(0,s))];
   let low=Infinity;
   for(let i=0;i<2;i++){
@@ -1506,23 +1593,25 @@ function updateCarl(dt){
     const f=a[i]-kn[i], sf=Math.sin(f);            // Unterschenkelwinkel; Sohle reicht von der Ferse (-0.07) bis zur Spitze (+0.16)
     low=Math.min(low,0.78-0.36*Math.cos(a[i])-0.42*Math.cos(f)+Math.min(0.16*sf,-0.07*sf));
   }
-  const arm=A*(0.8+0.3*run), eb=0.12+(0.18+1.05*run)*mv;                   // Arme gegengleich, Ellbogen beim Joggen angewinkelt
+  const arm=A*(0.8+0.3*run+0.25*sp), eb=0.12+(0.18+1.05*run+0.2*sp)*mv;                   // Arme gegengleich, Ellbogen beim Joggen angewinkelt
   arms[0].rotation.x=arm*s; arms[1].rotation.x=-arm*s;
   elbows[0].rotation.x=-eb-0.25*s*mv; elbows[1].rotation.x=-eb+0.25*s*mv;
-  body.position.y=0; body.rotation.x=(0.04+0.12*run)*mv; body.rotation.y=s*(0.08+0.06*run)*mv;
-  head.rotation.x=-0.1*run*mv;
+  const lean=(0.04+0.12*run+0.2*sp)*mv;                                   // Vorlage um das Hüftgelenk (y=0.78), nicht um die Füße
+  body.rotation.x=lean; body.rotation.y=s*(0.08+0.06*run+0.06*sp)*mv;
+  body.position.set(0,0.78*(1-Math.cos(lean)),-0.78*Math.sin(lean));
+  head.rotation.x=-(0.1*run+0.15*sp)*mv;                                   // Blick bleibt trotz Vorlage nach vorn
   head.rotation.y=-s*(0.08+0.06*run)*mv+Math.sin(clock.elapsedTime*0.7)*0.2;   // schaut sich um
   head.rotation.z=Math.sin(clock.elapsedTime*0.9)*0.04;
   // tiefster Fuß steht auf dem Boden, dazwischen eine kurze Flugphase
-  p.y=groundY(p.x,p.z)+S*(-low+0.035*run*mv*Math.abs(c));
+  p.y=groundY(p.x,p.z)+S*(-low+(0.035*run+0.09*sp)*mv*Math.abs(c));
   d.mesh.position.copy(p);
   // Fußaufsatz (Bein ganz vorn): Staub auf Kies
   const step=Math.floor((d.phase-Math.PI/2)/Math.PI);
   if(moving && step!==Math.floor((prev-Math.PI/2)/Math.PI)){
     const side=(step%2===0?-1:1)*0.08*S, fx=p.x+tg.x*0.7+tg.z*side, fz=p.z+tg.z*0.7-tg.x*side;
-    if(v>1.2 && onGravel(fx,fz)) puff(fx,fz,tg,Math.round(2+3*run));
+    if(v>1.2 && onGravel(fx,fz)) puff(fx,fz,tg,Math.round(2+3*run+4*sp));
     const dist=camera.position.distanceTo(p);                      // leiser mit Abstand zur Kamera
-    stepSound(surfaceAt(fx,fz),(0.45+0.55*run)/(1+(dist/28)**2));
+    stepSound(surfaceAt(fx,fz),(0.45+0.55*run+0.3*sp)/(1+(dist/28)**2));
   }
   const gl=0.34*(1-0.72*blend)*(1-0.35*rainB);
   for(const m of carlGlow) m.emissiveIntensity=gl;
@@ -1871,6 +1960,7 @@ renderer.setAnimationLoop(()=>{
     u.uOpacity.value=0.55*rainB; u.uTime.value=clock.elapsedTime; u.uCam.value.copy(camera.position);
   }
   waterU.uTime.value=clock.elapsedTime; waterU.uRain.value=rainB;
+  windU.uTime.value=clock.elapsedTime; windU.uGust.value=1+1.5*rainB;
   controls.update();
   sky.position.copy(camera.position); skyMat.uniforms.uTime.value=clock.elapsedTime;
   renderer.render(scene,camera);
