@@ -1222,28 +1222,53 @@ function makeCarl(){
   const sh=mesh(new THREE.SphereGeometry(1,20,12),knit,0,1.21,0); sh.scale.set(0.205,0.08,0.11); body.add(sh);
   const hip=mesh(new THREE.SphereGeometry(1,16,12),jeans,0,0.79,0); hip.scale.set(0.15,0.1,0.098); g.add(hip);
   body.add(mesh(new THREE.CylinderGeometry(0.066,0.078,0.09,16,1,true),knit,0,1.285,-0.005));   // Stehkragen
-  body.add(mesh(new THREE.CylinderGeometry(0.052,0.058,0.1,14),turtle,0,1.295,0));
-  body.add(mesh(new THREE.CylinderGeometry(0.045,0.05,0.08,12),skin,0,1.35,0));
+  body.add(mesh(new THREE.CylinderGeometry(0.06,0.064,0.1,16),turtle,0,1.295,0));
+  body.add(mesh(new THREE.CylinderGeometry(0.054,0.058,0.08,14),skin,0,1.35,-0.008));
 
   // Kopf: verformte Kugel (Kiefer schmaler, Hinterkopf tiefer, Nase), Foto nur auf der Vorderseite, Haarkappe mit Strähnen
   const head=new THREE.Group(); head.position.y=1.55; body.add(head);
-  const R=[0.165,0.205,0.172], sm=THREE.MathUtils.smoothstep;
+  // Proportionen und Relief sind an face.png vermessen: Kopfseite ↔ x=±PS im Foto, Kinn unten, Scheitel knapp unter dem Bildrand
+  const R=[0.139,0.205,0.172], PS=0.8, sm=THREE.MathUtils.smoothstep;
+  const toM=(X,Y)=>[PS*X/R[0], 0.935*Y/R[1]-0.035];   // Kopf → entzerrte Fotokoordinaten m (−1…1)
+  const TILT=-0.0785, ct=Math.cos(TILT), st=Math.sin(TILT);
+  const photoUV=(X,Y)=>{                    // m → Foto-UV: Kopf im Foto ~4.5° geneigt, Untergesicht leicht zur Seite gedreht
+    const [mx,my]=toM(X,Y), x=mx-0.079*(my-0.075), y=my+0.08;
+    return [0.5+(-0.012+x*ct-y*st)/2, 0.5+(-0.08+x*st+y*ct)/2];
+  };
+  const g2=(x,y,cx,cy,sx,sy)=>Math.exp(-(((x-cx)/sx)**2+((y-cy)/sy)**2));
+  const relief=(mx,my)=>{                   // Tiefe der Gesichtszüge an ihren Fotopositionen (Augen ±0.345/0.02, Nasenspitze −0.19, Mund −0.47, Kinn −0.8)
+    const ax=Math.abs(mx), nr=sm(-my,-0.12,0.17)*(1-sm(-my,0.2,0.27)), nw=0.05+0.05*nr;
+    return 0.042*nr*Math.exp(-((mx/nw)**2))  // Nasenrücken bis Spitze
+      +0.01*g2(ax,my,0.15,-0.225,0.06,0.045)  // Nasenflügel
+      -0.012*g2(ax,my,0.345,0.02,0.16,0.09)   // Augenhöhlen
+      +0.006*g2(ax,my,0.35,0.18,0.22,0.06)    // Brauenbogen
+      +0.007*g2(ax,my,0.47,-0.13,0.16,0.12)   // Wangenknochen
+      +0.006*g2(ax,my,0.37,-0.32,0.12,0.1)    // Lachwangen
+      +0.009*g2(mx,my,0,-0.47,0.3,0.09)       // Lippen
+      -0.004*g2(mx,my,0,-0.63,0.2,0.05)       // Kinnfurche
+      +0.009*g2(mx,my,0,-0.8,0.26,0.1);       // Kinn
+  };
   const headPt=(x,y,z,k=1)=>{              // Einheitsrichtung → Punkt auf dem Kopf
-    const jaw=sm(-y,-0.1,0.9);
-    let Z=z*R[2]*(z>0 ? 1-0.06*jaw : 1.1*(1-0.22*sm(-y,0.2,1)));
-    if(z>0) Z+=0.026*Math.exp(-(x**2/0.006+(y+0.2)**2/0.012));             // Nase (im Foto mittig)
-    return [x*R[0]*(1-0.2*jaw)*k, y*R[1]*k, Z*k];
+    const X=x*R[0]*(1+0.15*sm(-y,0.5,0.95)*sm(z,-0.6,0)), Y=y*R[1]*(1-0.2*sm(-y,0.4,1)*sm(-z,0,0.6));   // eckiger Bartkiefer wie im Foto, Hinterkopf endet über dem Nacken
+    let Z=z*R[2]*(z>0 ? (1+0.3*(1-z))*(1-0.06*sm(-y,-0.1,0.9)) : 1.1*(1-0.22*sm(-y,0.2,1)));   // Gesicht flacher als eine Ellipse
+    Z+=0.05*sm(-y,0.4,1);                  // Kinn nach vorn, Unterkiefer läuft schräg zum Hals zurück
+    if(z>0) Z+=relief(...toM(X,Y))*sm(z,0.3,0.75);
+    return [X*k, Y*k, Z*k];
   };
   const headGeo=(k,...a)=>{                // Kugel auf die Kopfform ziehen; k(x,y,z) = Abstandsfaktor der Schale
-    const geo=new THREE.SphereGeometry(1,...a), p=geo.attributes.position, unit=geo.userData.unit=p.clone(), n=geo.attributes.normal, v=new THREE.Vector3();
+    const geo=new THREE.SphereGeometry(1,...a), p=geo.attributes.position, unit=geo.userData.unit=p.clone(), n=geo.attributes.normal;
+    const u=new THREE.Vector3(), d=new THREE.Vector3(), t1=new THREE.Vector3(), t2=new THREE.Vector3(), A=new THREE.Vector3(), B=new THREE.Vector3(), e=0.002;
+    const at=(t,s,out)=>{ d.copy(u).addScaledVector(t,s).normalize(); return out.set(...headPt(d.x,d.y,d.z,k(d.x,d.y,d.z))); };
     for(let i=0;i<p.count;i++){
-      const x=unit.getX(i), y=unit.getY(i), z=unit.getZ(i), q=headPt(x,y,z,k(x,y,z));
-      p.setXYZ(i,...q); v.set(q[0]/R[0]**2,q[1]/R[1]**2,q[2]/R[2]**2).normalize(); n.setXYZ(i,v.x,v.y,v.z);
+      u.fromBufferAttribute(unit,i); p.setXYZ(i,...headPt(u.x,u.y,u.z,k(u.x,u.y,u.z)));
+      t1.set(0,1,0).cross(u); if(t1.lengthSq()<1e-6) t1.set(1,0,0); t1.normalize(); t2.crossVectors(u,t1);
+      const da=at(t1,e,A).sub(at(t1,-e,new THREE.Vector3())), db=at(t2,e,B).sub(at(t2,-e,new THREE.Vector3()));
+      da.cross(db).normalize(); n.setXYZ(i,da.x,da.y,da.z);   // Normale numerisch, damit das Relief schattiert
     }
     return geo;
   };
   // Haaransatz als Höhe y über dem Winkel a zur Blickrichtung: Stirn, Schläfe/über dem Ohr, Nacken
-  const hairY=a=>0.62-0.54*sm(a,0.7,1.12)-0.66*sm(a,1.62,2.15);
+  const hairY=a=>0.65-0.56*sm(a,0.7,1.12)-0.66*sm(a,1.62,2.15);
   const HAIR=['#2a201d','#3a2c27','#46362f','#4f3d35','#5a463b','#634e42','#6e5848','#4c3a36','#3f312d'];   // aus dem Foto
   let hseed=5; const hrnd=()=>(hseed=(hseed*16807)%2147483647)/2147483647;   // eigener Generator, damit trnd/rnd unberührt bleiben
   const hairCv=document.createElement('canvas'); hairCv.width=1024; hairCv.height=512;
@@ -1265,11 +1290,21 @@ function makeCarl(){
   }
   const hairTex=new THREE.CanvasTexture(hairCv); hairTex.colorSpace=THREE.SRGBColorSpace; hairTex.anisotropy=8;
   const headTex=ctex(1024,512,(c,w,h)=>{   // Schädel: Haut, darauf dieselben Haare (unter der Kappe scheint nie Haut durch)
-    c.fillStyle='#d4937c'; c.fillRect(0,0,w,h);
-    for(let i=0;i<9000;i++){               // Bart: Stoppeln an Kiefer und Kinn, wo das Foto zu den Seiten ausblendet
-      const px=hrnd()*w, py=h*(0.6+hrnd()*0.32); let a=Math.abs(px/w-0.25)*Math.PI*2; if(a>Math.PI) a=Math.PI*2-a;
-      const y=Math.cos(py/h*Math.PI); if(a>1.75 || y>-0.28+0.25*sm(a,1.2,1.75)) continue;
-      c.fillStyle=HAIR[Math.floor(hrnd()*HAIR.length)]; c.globalAlpha=0.35+hrnd()*0.4; c.fillRect(px,py,1.5+hrnd()*2,2+hrnd()*3);
+    c.fillStyle='#e2a07f'; c.fillRect(0,0,w,h);   // Hautton der Wangenränder im Foto, wo es ausblendet
+    const beard=(px,py)=>{                 // Bartdichte 0…1 an Kiefer, Kinn und Koteletten, wo das Foto zu den Seiten ausblendet
+      let a=Math.abs(px/w-0.25)*Math.PI*2; if(a>Math.PI) a=Math.PI*2-a;
+      const y=Math.cos(py/h*Math.PI);
+      return (1-sm(a,1.6,1.85))*sm(-0.2+0.22*sm(a,1.1,1.6)-y,0,0.12);
+    };
+    const id=c.getImageData(0,0,w,h), D=id.data;
+    for(let py=0;py<h;py++) for(let px=0;px<w;px++){
+      const b=0.7*beard(px,py); if(b<=0) continue; const o=(py*w+px)*4;
+      D[o]+=(0x66-D[o])*b; D[o+1]+=(0x45-D[o+1])*b; D[o+2]+=(0x38-D[o+2])*b;
+    }
+    c.putImageData(id,0,0);
+    for(let i=0;i<30000;i++){              // Stoppeln darauf
+      const px=hrnd()*w, py=h*(0.5+hrnd()*0.45), b=beard(px,py); if(hrnd()>b) continue;
+      c.fillStyle=HAIR[Math.floor(hrnd()*HAIR.length)]; c.globalAlpha=0.4+hrnd()*0.5; c.fillRect(px,py,1.5+hrnd()*1.5,2+hrnd()*3);
     }
     c.globalAlpha=1; c.drawImage(hairCv,0,0);
   });
@@ -1277,16 +1312,29 @@ function makeCarl(){
   head.add(mesh(headGeo(()=>1,48,36),headM,0,0,0));
   const hairM=new THREE.MeshStandardMaterial({map:hairTex,roughness:1,emissive:0xffffff,emissiveMap:hairTex,alphaTest:.5});
   // Kappe: am Ansatz dünn, oben und hinten dicker, leicht zerzaust
-  head.add(mesh(headGeo((x,y,z)=>1.012+0.055*sm(y-hairY(Math.atan2(Math.abs(x),z)),0,0.45)+0.008*Math.sin(x*23+y*17)*Math.sin(z*19-y*11),64,40),hairM,0,0,0));
+  head.add(mesh(headGeo((x,y,z)=>1.024+(0.035+0.045*sm(y,0.2,0.8))*sm(y-hairY(Math.atan2(Math.abs(x),z)),0,0.4)+0.008*Math.sin(x*23+y*17)*Math.sin(z*19-y*11)+0.012*Math.sin(x*9-z*7+1)*Math.sin(y*8+x*5),64,40),hairM,0,0,0));
+  // Ohren an der Stelle, wo sie im Foto sitzen (y≈−0.12): Muschel nach hinten ausgestellt, innen dunkler
+  const earM=new THREE.MeshStandardMaterial({color:0xd98a72,roughness:.85,emissive:0xd98a72}), conchaM=new THREE.MeshStandardMaterial({color:0xa65a4c,roughness:.9,emissive:0xa65a4c});
+  carlGlow.push(earM,conchaM);
   for(const sx of [-1,1]){
-    const e=mesh(new THREE.SphereGeometry(1,12,10),skin,...headPt(sx*0.992,-0.08,-0.1)); e.scale.set(0.014,0.04,0.026); e.rotation.y=sx*0.4; head.add(e);
+    const ear=new THREE.Group(); ear.position.set(...headPt(sx*0.995,-0.09,-0.1)); ear.rotation.set(0.12,sx*0.5,-sx*0.08); head.add(ear);
+    const o=mesh(new THREE.SphereGeometry(1,14,10),earM,sx*0.006,0,-0.004); o.scale.set(0.011,0.038,0.024); ear.add(o);
+    const lobe=mesh(new THREE.SphereGeometry(1,10,8),earM,sx*0.005,-0.03,0.002); lobe.scale.set(0.008,0.012,0.012); ear.add(lobe);
+    const cc=mesh(new THREE.SphereGeometry(1,10,8),conchaM,sx*0.012,-0.002,-0.002); cc.scale.set(0.005,0.018,0.012); ear.add(cc);
   }
-  // Foto von vorn projiziert; zu den Seiten ausgeblendet, damit es dort nicht verschmiert
+  // Brillenbügel vom Scharnier (Rahmenende im Foto) über das Ohr – von vorn deckt sich der Rahmen mit dem Foto
+  for(const sx of [-1,1]){
+    const pts=[[0.13,0.031,0.098],[0.154,0.024,-0.03],[0.146,-0.008,-0.05]].map(([x,y,z])=>new THREE.Vector3(sx*x,y,z));
+    for(let i=0;i<2;i++){
+      const dv=pts[i+1].clone().sub(pts[i]), r=mesh(new THREE.BoxGeometry(0.004,0.006,dv.length()),dark,...pts[i].clone().add(pts[i+1]).multiplyScalar(0.5).toArray());
+      r.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),dv.normalize()); head.add(r);
+    }
+  }
+  // Foto von vorn projiziert (Hintergrund in face.png transparent); zu den Seiten ausgeblendet, damit es dort nicht verschmiert
   const fg=headGeo(()=>1.012,40,30,Math.PI/2-1.3,2.6,0.1,Math.PI-0.2), fp=fg.attributes.position, fu=fg.attributes.uv, fd=fg.userData.unit, fc=[];
   for(let i=0;i<fp.count;i++){
-    const x=fp.getX(i)/(R[0]*1.012), y=fp.getY(i)/(R[1]*1.012);
-    fu.setXY(i,0.5+x/2,0.5+y/2);
-    fc.push(1,1,1,1-sm(Math.atan2(Math.abs(fd.getX(i)),fd.getZ(i)),0.7,1.1));
+    fu.setXY(i,...photoUV(fp.getX(i)/1.012,fp.getY(i)/1.012));
+    fc.push(1,1,1,1-sm(Math.atan2(Math.abs(fd.getX(i)),fd.getZ(i)),0.9,1.2));
   }
   fg.setAttribute('color',new THREE.Float32BufferAttribute(fc,4));
   const faceTex=new THREE.TextureLoader().load('face.png'); faceTex.colorSpace=THREE.SRGBColorSpace; faceTex.anisotropy=8;
