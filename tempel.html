@@ -89,7 +89,7 @@ const scene = new THREE.Scene();
 // WebGPU, wo der Browser es kann, sonst fällt der Renderer selbst auf WebGL 2 zurück. Eigene Shader sind deshalb in TSL
 // geschrieben (Node-Materialien), das für beide Backends übersetzt wird.
 const renderer = new THREE.WebGPURenderer({antialias:true, forceWebGL:new URLSearchParams(location.search).has('webgl')});   // ?webgl erzwingt WebGL 2
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));   // 2 kostet ~30 % Bildrate, sieht kaum anders aus
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;   // PCFSoft gibt es im WebGPURenderer nicht
@@ -320,6 +320,37 @@ function box(w,h,d,mat,x,y,z){
   return mesh(g,mat,x,y,z);
 }
 const cyl = (rt,rb,h,mat,x,y,z,seg=16)=>mesh(new THREE.CylinderGeometry(rt,rb,h,seg),mat===M.wood?M.woodC:mat===M.dark?M.darkC:mat,x,y,z);
+// Statische Gruppe zu einem Mesh je Material (+ Schatten/renderOrder) verschmelzen: aus Hunderten Draw-Calls und
+// Schattenwerfern werden eine Handvoll (der Schattendurchgang des WebGPURenderer kostet pro Objekt viel CPU).
+// Nicht-Meshes (Lichter) bleiben; Materialien bleiben dieselben Objekte, applyLight() greift also weiter.
+const _inv=new THREE.Matrix4(), _m=new THREE.Matrix4();
+function bake(g){
+  g.updateMatrixWorld(true); _inv.copy(g.matrixWorld).invert();
+  const parts=new Map(), old=[];
+  g.traverse(o=>{
+    if(!o.isMesh || Array.isArray(o.material)) return;
+    _m.multiplyMatrices(_inv,o.matrixWorld);
+    let geo=o.geometry.index?o.geometry.toNonIndexed():o.geometry.clone();
+    for(const k of Object.keys(geo.attributes)) if(!['position','normal','uv'].includes(k)) geo.deleteAttribute(k);
+    if(!geo.attributes.normal) geo.computeVertexNormals();
+    if(!geo.attributes.uv) geo.setAttribute('uv',new THREE.Float32BufferAttribute(new Float32Array(geo.attributes.position.count*2),2));
+    geo.clearGroups(); geo.applyMatrix4(_m);
+    if(_m.determinant()<0){                                    // gespiegelt: Dreiecksumlauf umdrehen
+      for(const a of Object.values(geo.attributes)) for(let i=0;i<a.count;i+=3) for(let c=0;c<a.itemSize;c++){
+        const t=a.getComponent(i+1,c); a.setComponent(i+1,c,a.getComponent(i+2,c)); a.setComponent(i+2,c,t);
+      }
+    }
+    const key=o.material.uuid+o.castShadow+o.receiveShadow+o.renderOrder;
+    if(!parts.has(key)) parts.set(key,{src:o,geos:[]});
+    parts.get(key).geos.push(geo); old.push(o);
+  });
+  for(const o of old) o.removeFromParent();
+  for(const {src,geos} of parts.values()){
+    const m=new THREE.Mesh(mergeGeometries(geos),src.material);
+    m.castShadow=src.castShadow; m.receiveShadow=src.receiveShadow; m.renderOrder=src.renderOrder; g.add(m);
+  }
+  return g;
+}
 
 // ---------- Boden ----------
 scene.add(mesh(new THREE.CircleGeometry(120,64).rotateX(-Math.PI/2), M.grass, 0,0,0,false));
@@ -418,7 +449,7 @@ for(const x of [-6,-2,2,6]){
   hall.add(cyl(0.01,0.01,0.8,M.dark,x,baseY+3.9,5.9,4));
 }
 hall.position.set(0,0,-8);
-scene.add(hall);
+scene.add(bake(hall));
 
 // ---------- Tokyo Tower (anstelle der Pagode) ----------
 const TOWER={x:-26, z:-4, half:5.8, h:34};     // Standort, halbe Fußbreite, Höhe (auch für Wegsuche, Drohne und Bäume)
@@ -481,7 +512,7 @@ function tokyoTower(){
   beacon.castShadow=false; g.add(beacon); g.userData={beacon:beacon.material,win};
   return g;
 }
-const tower=tokyoTower(); tower.position.set(TOWER.x,0,TOWER.z); scene.add(tower);
+const tower=tokyoTower(); tower.position.set(TOWER.x,0,TOWER.z); scene.add(bake(tower));
 
 // ---------- Burg Ōsaka (verkleinertes Modell des Hauptturms, rechts neben der Halle) ----------
 const CASTLE={x:32, z:-6, half:5.7, h:13};     // Standort, halbe Sockelbreite, Höhe (auch für Wegsuche, Drohne und Bäume)
@@ -545,7 +576,7 @@ function osakaCastle(){
   });
   return g;
 }
-const castle=osakaCastle(); castle.position.set(CASTLE.x,0,CASTLE.z); scene.add(castle);
+const castle=osakaCastle(); castle.position.set(CASTLE.x,0,CASTLE.z); scene.add(bake(castle));
 // Flächen, die frei von Zufallsbäumen bleiben
 const keepClear=[[TOWER.x,TOWER.z,TOWER.half+2.5],[CASTLE.x,CASTLE.z,CASTLE.half+3]];
 
@@ -571,11 +602,11 @@ function torii(scale=1){
   g.scale.setScalar(scale);
   return g;
 }
-const t1=torii(1); t1.position.set(0,0,42); scene.add(t1);
-const t2=torii(0.7); t2.position.set(0,0,28); scene.add(t2);
+const t1=torii(1); t1.position.set(0,0,42); scene.add(bake(t1));
+const t2=torii(0.7); t2.position.set(0,0,28); scene.add(bake(t2));
 
 // ---------- Steinlaternen (Tōrō) ----------
-function lantern(){
+function lantern(light=true){
   const g=new THREE.Group();
   g.add(box(0.9,0.25,0.9,M.stone,0,0.12,0));
   g.add(cyl(0.18,0.22,1.4,M.stone,0,0.95,0,8));
@@ -583,15 +614,21 @@ function lantern(){
   const lit=box(0.5,0.55,0.5,M.glow,0,2.1,0); g.add(lit);
   const cap=mesh(new THREE.ConeGeometry(0.75,0.55,4),M.stone,0,2.65,0); cap.rotation.y=Math.PI/4; g.add(cap);
   g.add(mesh(new THREE.SphereGeometry(0.12,8,8),M.stone,0,3.0,0));
-  const pl=new THREE.PointLight(0xffb347,0,9,2); pl.position.y=2.1; g.add(pl); g.userData.light=pl;
+  if(light){ const pl=new THREE.PointLight(0xffb347,0,9,2); pl.position.y=2.1; pl.userData.k=14; g.add(pl); lampLights.push(pl); }
   return g;
 }
-const lanterns=[];
+// Jede PointLight kostet in jedem Pixel jedes beleuchteten Materials Rechenzeit (auch tagsüber mit Intensität 0;
+// Ein-/Ausschalten würde alle Shader neu bauen). Darum leuchten die Allee-Laternen nur über ihr Glühmaterial,
+// und vier Lichter über der Wegmitte beleuchten je zwei Paare. Insgesamt 6 statt 16 PointLights.
+const lampLights=[];
 for(let i=0;i<7;i++) for(const s of [-1,1]){
-  const l=lantern(); l.position.set(s*3.4,0,8+i*4.2); scene.add(l); lanterns.push(l);
+  const l=bake(lantern(false)); l.position.set(s*3.4,0,8+i*4.2); scene.add(l);
+}
+for(let i=0;i<4;i++){
+  const pl=new THREE.PointLight(0xffb347,0,14,2); pl.position.set(0,2.1,8+25.2*(i+0.5)/4); pl.userData.k=30; scene.add(pl); lampLights.push(pl);
 }
 // zwei große Laternen vor der Halle, auf dem Kieshof (Oberkante 0.2)
-for(const s of [-1,1]){ const l=lantern(); l.position.set(s*9,0.2,5); l.scale.setScalar(1.3); scene.add(l); lanterns.push(l); }
+for(const s of [-1,1]){ const l=bake(lantern()); l.position.set(s*9,0.2,5); l.scale.setScalar(1.3); scene.add(l); }
 
 // ---------- Teich + Brücke ----------
 const pond = mesh(new THREE.CylinderGeometry(7,7,0.15,48),M.water,16,0.15,12,false);
@@ -630,7 +667,7 @@ for(const sz of [-1,1]) for(let i=0;i<=10;i+=2){
   const t=i/10, x=-6+t*12, y=0.4+Math.sin(t*Math.PI)*1.3;
   bridge.add(cyl(0.07,0.07,1.0,M.wood,x,y+0.55,sz*1.0,8));
 }
-bridge.position.set(16,0,12); scene.add(bridge);
+bridge.position.set(16,0,12); scene.add(bake(bridge));
 
 // ---------- Bäume ----------
 // Kirschbaum: kurzer Stamm, der sich fraktal in Äste → Zweige → Triebe gabelt. Jeder Ast wird von 3D-Wertrauschen
@@ -800,7 +837,7 @@ function makeTesla(){
   // Spiegelungen nur für das Auto: kleine Studio-Umgebung als envMap (nicht als Szenenlicht)
   const env=new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(renderer),0.04).texture;
   const std=o=>new THREE.MeshStandardMaterial(o), phys=o=>new THREE.MeshPhysicalMaterial({envMap:env,envMapIntensity:.7,...o});
-  const paint=phys({color:0xf3f4f6,roughness:.3,metalness:.3,clearcoat:1,clearcoatRoughness:.08});
+  const paint=phys({color:0x1d4fa3,roughness:.3,metalness:.5,clearcoat:1,clearcoatRoughness:.08});   // Deep Blue Metallic
   const glass=phys({color:0x10161d,roughness:.05,metalness:.2,clearcoat:1,transparent:true,opacity:.8,depthWrite:false});
   const chrome=phys({color:0xd9dde2,roughness:.12,metalness:1});
   const rimM=phys({color:0x9aa0a8,roughness:.28,metalness:.9});
@@ -921,7 +958,7 @@ function makeTesla(){
   return g;
 }
 const tesla=makeTesla();
-tesla.scale.setScalar(2); tesla.rotation.y=-Math.PI/2; tesla.position.set(CAR.x,0.2-0.02,CAR.z); scene.add(tesla);
+tesla.scale.setScalar(2); tesla.rotation.y=-Math.PI/2; tesla.position.set(CAR.x,0.2-0.02,CAR.z); scene.add(bake(tesla));
 
 // ---------- Damhirsche ----------
 const D = {
@@ -1607,9 +1644,168 @@ function updateCarl(dt){
   for(const m of carlGlow) m.emissiveIntensity=gl;
 }
 
-// Damhirsch, der Carl nachläuft: folgt Carls Spur (trail) mit Abstand – damit auf demselben hindernisfreien Weg,
+// ---------- Tüpfelhyäne ----------
+// Glatte Körperteile als "Loft": Querschnitts-Ellipsen (Breite w, Höhe h, Versatz dy) entlang einer Mittellinie.
+// uv: u läuft einmal um den Querschnitt (0.25 = oben, 0.75 = Bauch), v entlang der Linie
+function loft(pts, prof, segV=28, segU=18){             // pts: [[x,y,z],…]
+  const curve=new THREE.CatmullRomCurve3(pts.map(p=>new THREE.Vector3(...p))), pos=[], uv=[], idx=[];
+  const up=new THREE.Vector3(0,1,0), side=new THREE.Vector3(), nup=new THREE.Vector3();
+  for(let j=0;j<=segV;j++){
+    const t=j/segV, c=curve.getPointAt(t), T=curve.getTangentAt(t), [w,h,dy=0]=prof(t);
+    side.crossVectors(up,T).normalize(); nup.crossVectors(T,side);
+    for(let i=0;i<=segU;i++){
+      const a=i/segU*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a);
+      pos.push(c.x+side.x*w*ca+nup.x*(h*sa+dy), c.y+side.y*w*ca+nup.y*(h*sa+dy), c.z+side.z*w*ca+nup.z*(h*sa+dy));
+      uv.push(i/segU,t);
+    }
+  }
+  const n=segU+1;
+  for(let j=0;j<segV;j++) for(let i=0;i<segU;i++){
+    const a=j*n+i; idx.push(a,a+1,a+n, a+1,a+n+1,a+n);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+  g.setIndex(idx); g.computeVertexNormals();
+  const nr=g.attributes.normal;                                // Naht (u=0/1) glätten
+  for(let j=0;j<=segV;j++){
+    const a=j*n, b=a+segU, x=nr.getX(a)+nr.getX(b), y=nr.getY(a)+nr.getY(b), z=nr.getZ(a)+nr.getZ(b), l=Math.hypot(x,y,z)||1;
+    nr.setXYZ(a,x/l,y/l,z/l); nr.setXYZ(b,x/l,y/l,z/l);
+  }
+  return g;
+}
+// Profil aus Stützstellen [t,w,h,dy], dazwischen weich (smoothstep) interpoliert
+const keyProf=keys=>t=>{
+  let k=1; while(k<keys.length-1 && keys[k][0]<t) k++;
+  const A=keys[k-1], B=keys[k], s=Math.min(1,Math.max(0,(t-A[0])/(B[0]-A[0]))), f=s*s*(3-2*s);
+  return [1,2,3].map(i=>A[i]+(B[i]-A[i])*f);
+};
+const HY=(()=>{
+  let seed=13; const r=()=>(seed=(seed*16807)%2147483647)/2147483647;   // eigener Generator: rnd/trnd bleiben unberührt
+  // Fell: sandfarben, Rücken dunkler, Bauch heller, dunkelbraune Flecken, feine Haarstriche
+  const fur=(ctx,s,{spots=70,muzzle=false}={})=>{
+    const g=ctx.createLinearGradient(0,0,s,0);
+    g.addColorStop(0,'#b19a6c'); g.addColorStop(0.25,'#9a8158'); g.addColorStop(0.5,'#b19a6c'); g.addColorStop(0.75,'#cbb88f'); g.addColorStop(1,'#b19a6c');
+    ctx.fillStyle=g; ctx.fillRect(0,0,s,s);
+    for(let i=0;i<spots;i++){
+      const u=r(), v=r(); if(Math.abs(u-0.75)<0.1 && r()<0.8) continue;       // Bauch fast fleckenlos
+      const rx=s*(0.012+r()*0.016), ry=rx*(0.8+r()*0.6);
+      ctx.fillStyle=`rgba(${60+r()*25|0},${42+r()*15|0},${26+r()*10|0},${0.75+r()*0.25})`;
+      for(const du of [-1,0,1]){ ctx.beginPath(); ctx.ellipse((u+du)*s,v*s,rx,ry,r()*3,0,Math.PI*2); ctx.fill(); }
+    }
+    for(let i=0;i<5000;i++){                                                 // Haarstriche
+      const x=r()*s, y=r()*s, l=2+r()*5, d=r()<0.5;
+      ctx.strokeStyle=d?`rgba(70,52,32,${0.12+r()*0.15})`:`rgba(235,220,185,${0.08+r()*0.12})`;
+      ctx.lineWidth=0.7; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+(r()-.5)*2,y+l); ctx.stroke();
+    }
+    if(muzzle){                                                              // dunkle Schnauze, zum Ende hin fast schwarz
+      const m=ctx.createLinearGradient(0,s*0.55,0,s); m.addColorStop(0,'rgba(40,30,22,0)'); m.addColorStop(0.35,'rgba(40,30,22,0.85)'); m.addColorStop(1,'rgba(25,19,15,1)');
+      ctx.fillStyle=m; ctx.fillRect(0,s*0.55,s,s*0.45);
+      for(const u of [0.12,0.38]){ const e=ctx.createRadialGradient(u*s,s*0.42,0,u*s,s*0.42,s*0.07); e.addColorStop(0,'rgba(45,34,24,0.7)'); e.addColorStop(1,'rgba(45,34,24,0)'); ctx.fillStyle=e; ctx.fillRect(0,0,s,s); }   // Augenpartie
+    }
+  };
+  const tex=o=>{ const t=canvasTex(512,(c,s)=>fur(c,s,o)); t.repeat.set(1,1); return t; };
+  return {
+    fur:  new THREE.MeshStandardMaterial({map:tex({spots:90}), roughness:1}),
+    leg:  new THREE.MeshStandardMaterial({map:tex({spots:40}), roughness:1}),
+    face: new THREE.MeshStandardMaterial({map:tex({spots:14,muzzle:true}), roughness:.95}),
+    dark: new THREE.MeshStandardMaterial({color:0x2b231c, roughness:1}),
+    mane: new THREE.MeshStandardMaterial({color:0x4a3a28, roughness:1}),
+    nose: new THREE.MeshStandardMaterial({color:0x151110, roughness:.35}),
+    eye:  new THREE.MeshStandardMaterial({color:0x1a120c, roughness:.15}),
+    claw: new THREE.MeshStandardMaterial({color:0x3a342e, roughness:.5}),
+  };
+})();
+// gleicher Aufbau wie makeDeer (blickt nach +Z, userData legs/neck/head) plus Gelenke (knees) und Schwanz:
+// abfallender Rücken (Vorderläufe länger), tiefe Brust, eingezogene Flanke, Mähne, tief getragener Kopf
+// mit dunkler Schnauze, runde Ohren. Teilgruppen werden mit bake() je Material zu einem Mesh verschmolzen.
+function makeHyena(){
+  const g=new THREE.Group();
+  const FY=0.98, HYB=0.74;                                   // Schulter- und Hüfthöhe
+  const torso=new THREE.Group(); g.add(torso);
+  // höchster Punkt eines Lofts bei z (für die Mähne)
+  const topAt=(geo,z)=>{ const a=geo.attributes.position; let y=-9; for(let i=0;i<a.count;i++) if(Math.abs(a.getZ(i)-z)<0.05 && Math.abs(a.getX(i))<0.05) y=Math.max(y,a.getY(i)); return y; };
+  const body=mesh(loft([[0,0.80,-0.68],[0,0.86,-0.46],[0,0.92,-0.12],[0,1.02,0.24],[0,1.1,0.5],[0,1.13,0.68]],
+    keyProf([[0,0.03,0.03,0],[0.07,0.17,0.18,0],[0.2,0.24,0.26,-0.02],[0.45,0.21,0.23,0.03],[0.7,0.27,0.35,-0.07],[0.9,0.24,0.3,-0.04],[1,0.05,0.05,0]])),HY.fur);
+  torso.add(body);
+  for(const s of [-1,1]){                                    // Schulter- und Keulenmuskeln
+    const sh=mesh(new THREE.SphereGeometry(1,12,10),HY.fur,s*0.17,FY+0.02,0.42); sh.scale.set(0.09,0.2,0.14); sh.rotation.x=-0.3; torso.add(sh);
+    const hp=mesh(new THREE.SphereGeometry(1,12,10),HY.fur,s*0.14,HYB+0.04,-0.47); hp.scale.set(0.08,0.14,0.13); hp.rotation.x=0.4; torso.add(hp);
+  }
+  for(let i=0;i<9;i++){                                       // Mähne über dem Widerrist
+    const z=0.6-i*0.07, t=mesh(new THREE.ConeGeometry(0.035,0.13+0.04*Math.sin(i*1.7)-i*0.006,5),HY.mane,(i%2-.5)*0.03,topAt(body.geometry,z)+0.03,z); t.rotation.x=-0.9; torso.add(t);
+  }
+  bake(torso);
+  // Hals + Kopf
+  const neck=new THREE.Group(); neck.position.set(0,1.1,0.58); g.add(neck);
+  const nk=mesh(loft([[0,0,-0.08],[0,0.06,0.14],[0,0.03,0.32],[0,-0.03,0.44]],
+    keyProf([[0,0.2,0.26,0],[0.5,0.16,0.2,0],[1,0.12,0.14,0]]),16,14),HY.fur);
+  neck.add(nk);
+  for(let i=0;i<10;i++){                                      // Mähne auf dem Hals
+    const z=0.36-i*0.045, t=mesh(new THREE.ConeGeometry(0.03,0.16+0.05*Math.sin(i*2.3),5),HY.mane,(i%2-.5)*0.025,topAt(nk.geometry,z)+0.03,z); t.rotation.x=-1.0; neck.add(t);
+  }
+  bake(neck);
+  const head=new THREE.Group(); head.position.set(0,-0.03,0.44); neck.add(head);
+  head.add(mesh(loft([[0,0.03,-0.12],[0,0.04,0.04],[0,0.0,0.18],[0,-0.04,0.32],[0,-0.05,0.39]],
+    keyProf([[0,0.05,0.05,0],[0.14,0.14,0.14,0],[0.36,0.15,0.13,0],[0.62,0.09,0.09,-0.005],[0.88,0.075,0.075,0],[1,0.025,0.03,0]]),24,18),HY.face));
+  const nose=mesh(new THREE.SphereGeometry(1,10,8),HY.nose,0,-0.035,0.385); nose.scale.set(0.045,0.032,0.03); head.add(nose);
+  const jaw=mesh(new THREE.SphereGeometry(1,10,8),HY.face,0,-0.085,0.17); jaw.scale.set(0.1,0.05,0.16); head.add(jaw);   // Unterkiefer
+  for(const s of [-1,1]){
+    head.add(mesh(new THREE.SphereGeometry(0.024,10,8),HY.eye,s*0.112,0.07,0.15));
+    const brow=mesh(new THREE.SphereGeometry(1,8,6),HY.face,s*0.1,0.095,0.14); brow.scale.set(0.05,0.025,0.04); head.add(brow);
+    const lip=mesh(new THREE.BoxGeometry(0.008,0.008,0.15),HY.dark,s*0.068,-0.072,0.29); lip.rotation.y=-s*0.12; head.add(lip);   // Maulspalte
+    const ear=new THREE.Group(); ear.position.set(s*0.095,0.15,-0.03); ear.rotation.set(-0.2,s*0.35,-s*0.45); head.add(ear);
+    const outer=mesh(new THREE.SphereGeometry(1,12,10),HY.face,0,0.06,0); outer.scale.set(0.07,0.09,0.022); ear.add(outer);
+    const inner=mesh(new THREE.SphereGeometry(1,10,8),HY.dark,0,0.055,0.012); inner.scale.set(0.05,0.07,0.012); ear.add(inner);
+    const rim=mesh(new THREE.TorusGeometry(0.07,0.008,4,16,Math.PI),HY.dark,0,0.06,0.004); rim.scale.y=1.28; ear.add(rim);   // dunkler Ohrrand
+  }
+  bake(head);
+  // Schwanz: kurz, buschig, dunkle Spitze
+  const tail=new THREE.Group(); tail.position.set(0,0.83,-0.66); tail.rotation.x=-2.55; g.add(tail);
+  tail.add(mesh(new THREE.CylinderGeometry(0.03,0.04,0.2,8),HY.fur,0,0.1,0));
+  for(let i=0;i<7;i++){
+    const a=i*GOLD, c=mesh(new THREE.ConeGeometry(0.045,0.22,6),i<3?HY.mane:HY.dark,Math.cos(a)*0.03,0.27+i*0.012,Math.sin(a)*0.03);
+    c.rotation.set(Math.sin(a)*0.35,0,-Math.cos(a)*0.35); tail.add(c);
+  }
+  bake(tail);
+  // Beine: Schulter-/Hüftgelenk (legs) -> Ellbogen/Sprunggelenk (knees) -> Pfote mit vier Zehen und Krallen
+  const legs=[], knees=[];
+  const paw=(p,y)=>{
+    const f=mesh(new THREE.SphereGeometry(1,10,8),HY.leg,0,y+0.035,0.03); f.scale.set(0.065,0.04,0.085); p.add(f);
+    for(const x of [-0.035,-0.012,0.012,0.035]){
+      p.add(mesh(new THREE.SphereGeometry(0.022,8,6),HY.leg,x,y+0.022,0.1-Math.abs(x)*0.5));
+      const c=mesh(new THREE.ConeGeometry(0.008,0.03,5),HY.claw,x,y+0.012,0.125-Math.abs(x)*0.5); c.rotation.x=Math.PI/2+0.4; p.add(c);
+    }
+  };
+  for(const [x,z,front] of [[-.17,.44,1],[.17,.44,1],[-.16,-.5,0],[.16,-.5,0]]){
+    const y=front?FY:HYB, p=new THREE.Group(); p.position.set(x,y,z);
+    const kn=new THREE.Group(); kn.userData.base=front?0:0.35;
+    if(front){                                                 // Oberarm kräftig, Unterarm schlank und gerade
+      p.add(mesh(new THREE.SphereGeometry(0.08,10,8),HY.leg,0,0,0.01));                       // Schultergelenk, rundet den Ansatz
+      p.add(mesh(new THREE.CylinderGeometry(0.05,0.08,0.48,10),HY.leg,0,-0.24,0.01));
+      kn.position.set(0,-0.48,0.01);
+      kn.add(mesh(new THREE.SphereGeometry(0.052,10,8),HY.leg,0,0,0));                      // Ellbogen-/Handgelenk
+      kn.add(mesh(new THREE.CylinderGeometry(0.038,0.048,0.45,10),HY.leg,0,-0.225,0));
+      paw(kn,-y+0.48);
+    } else {                                                   // Oberschenkel nach vorn geneigt, Lauf nach hinten zum Sprunggelenk
+      p.add(mesh(new THREE.SphereGeometry(0.085,10,8),HY.leg,0,0,0.0));                      // Hüftgelenk
+      const th=mesh(new THREE.CylinderGeometry(0.048,0.085,0.36,10),HY.leg,0,-0.17,0.05); th.rotation.x=-0.3; p.add(th);
+      kn.position.set(0,-0.34,0.1);
+      const sh=new THREE.Group(); sh.rotation.x=-kn.userData.base; kn.add(sh);   // Lauf bleibt senkrecht, wenn das Gelenk in Grundstellung ist
+      kn.add(mesh(new THREE.SphereGeometry(0.05,10,8),HY.leg,0,0,0));                       // Sprunggelenk
+      const lw=mesh(new THREE.CylinderGeometry(0.035,0.045,0.36,10),HY.leg,0,-0.18,-0.01); sh.add(lw);
+      paw(sh,-y+0.34);
+    }
+    kn.rotation.x=kn.userData.base;
+    bake(kn); bake(p); p.add(kn);                              // erst einzeln verschmelzen, dann zusammensetzen (Gelenke bleiben beweglich)
+    g.add(p); legs.push(p); knees.push(kn);
+  }
+  g.userData={legs,knees,neck,head,tail};
+  return g;
+}
+
+// Hyäne, die Carl nachläuft: folgt Carls Spur (trail) mit Abstand – damit auf demselben hindernisfreien Weg,
 // egal ob Carl seine Runde läuft oder zu einem Klickziel unterwegs ist
-const chaser={mesh:makeDeer(false), gap:4.6, phase:0, side:0, move:0, pos:new THREE.Vector3(), dir:new THREE.Vector3(0,0,1), want:new THREE.Vector3(0,0,1)};
+const chaser={mesh:makeHyena(), gap:4.6, phase:0, side:0, move:0, pos:new THREE.Vector3(), dir:new THREE.Vector3(0,0,1), want:new THREE.Vector3(0,0,1)};
 chaser.mesh.scale.setScalar(1.2); chaser.mesh.rotation.order='YXZ'; scene.add(chaser.mesh);
 { // Start: hinter Carl auf der Runde, Spur bis zu ihm vorbelegen
   const t0=carl.t-chaser.gap/carl.len;
@@ -1635,6 +1831,9 @@ function updateChaser(dt){
   const trot=Math.min(1,v/3)*d.move, sw=Math.sin(d.phase)*(0.3+0.3*trot)*d.move, {legs,neck,head}=d.mesh.userData;
   legs[0].rotation.x= sw;  legs[3].rotation.x= sw;   // Diagonalgang
   legs[1].rotation.x=-sw;  legs[2].rotation.x=-sw;
+  const {knees,tail}=d.mesh.userData, lift=Math.cos(d.phase)*d.move*(0.5+0.5*trot);   // Gelenk beugt sich, während das Bein nach vorn schwingt
+  knees.forEach((k,i)=>k.rotation.x=k.userData.base+Math.max(0,(i===0||i===3?-lift:lift))*(i<2?0.9:0.6));
+  tail.rotation.z=Math.sin(d.phase*0.5)*0.18*d.move; tail.rotation.x=-2.55+0.25*trot;   // Schwanz pendelt, beim Traben etwas angehoben
   d.mesh.position.set(x,(yf+yb)/2+Math.abs(Math.cos(d.phase))*0.05*trot,z);
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
   d.mesh.rotation.x+=(-Math.atan2(yf-yb,2*r)-d.mesh.rotation.x)*Math.min(1,dt*10);
@@ -1656,7 +1855,7 @@ function applyLight(b){
   sun.intensity=(2.2-1.5*b)*(1-0.7*rainB);
   sun.color.set(b>0.5?0x8fa8ff:0xfff1d6);
   M.glow.emissiveIntensity=b*1.6;
-  for(const l of lanterns) l.userData.light.intensity=b*14;
+  for(const l of lampLights) l.intensity=b*l.userData.k;
   towerMat.emissiveIntensity=b*0.75; towerWhite.emissiveIntensity=b*0.45;                 // Turm nachts orange angestrahlt
   tower.userData.beacon.emissiveIntensity=b*5; tower.userData.win.emissiveIntensity=b*1.2;
   const tu=tesla.userData;                                  // Auto: nachts Licht an, Spiegelungen dunkler
@@ -1686,19 +1885,23 @@ const skyMat=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide, depthWrite:fa
     const i=floor(p), f0=fract(p), f=f0.mul(f0).mul(f0.mul(-2).add(3));
     return mix(mix(hash(i),hash(i.add(vec2(1,0))),f.x),mix(hash(i.add(vec2(0,1))),hash(i.add(vec2(1,1))),f.x),f.y);
   }).setLayout({name:'skyNoise',type:'float',inputs:[{name:'p',type:'vec2'}]});
-  const fbm=Fn(([q])=>{
+  // fBm mit wählbarer Oktavenzahl (Schleife wird beim Bauen des Shaders ausgerollt)
+  const fbmN=oct=>Fn(([q])=>{
     const v=float(0).toVar(), p=vec2(q).toVar();
-    for(let i=0,a=0.5;i<6;i++,a*=0.5){
+    for(let i=0,a=0.5;i<oct;i++,a*=0.5){
       v.addAssign(noise(p).mul(a));
       p.assign(vec2(p.x.mul(1.6).sub(p.y.mul(1.2)),p.x.mul(1.2).add(p.y.mul(1.6))).add(3.1));   // mat2(1.6,1.2,-1.2,1.6)*p
     }
     return v;
-  }).setLayout({name:'skyFbm',type:'float',inputs:[{name:'q',type:'vec2'}]});
-  const clouds=Fn(([p,t])=>{
+  }).setLayout({name:'skyFbm'+oct,type:'float',inputs:[{name:'q',type:'vec2'}]});
+  const fbm3=fbmN(3), fbm4=fbmN(4), fbm5=fbmN(5);
+  // Wolkendichte (x) und Dichte etwas Richtung Sonne versetzt (y, für die Beleuchtung); 18 statt früher 48 Rauschaufrufe
+  const clouds=Fn(([p,t,toSun])=>{
     const q=p.add(vec2(t.mul(0.03),t.mul(0.011))).toVar();                       // Windrichtung und -tempo
-    q.addAssign(vec2(fbm(q.mul(0.6).add(t.mul(0.004))),fbm(q.mul(0.6).add(5.2))).mul(0.55));   // Verwirbelung
-    return fbm(q).mul(0.72).add(fbm(q.mul(2.7).sub(t.mul(0.01))).mul(0.28));
-  }).setLayout({name:'skyClouds',type:'float',inputs:[{name:'p',type:'vec2'},{name:'t',type:'float'}]});
+    q.addAssign(vec2(fbm3(q.mul(0.6).add(t.mul(0.004))),fbm3(q.mul(0.6).add(5.2))).mul(0.55));   // Verwirbelung
+    const detail=fbm3(q.mul(2.7).sub(t.mul(0.01))).mul(0.28);
+    return vec2(fbm5(q).mul(0.72).add(detail),fbm4(q.add(toSun)).mul(0.72).add(detail));
+  }).setLayout({name:'skyClouds',type:'vec2',inputs:[{name:'p',type:'vec2'},{name:'t',type:'float'},{name:'toSun',type:'vec2'}]});
   skyMat.colorNode=Fn(()=>{
     const d=normalize(positionGeometry), up=max(d.y,0);
     const col=mix(uHorizon,uZenith,pow(up,0.55)).toVar();
@@ -1715,10 +1918,9 @@ const skyMat=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide, depthWrite:fa
     If(d.y.greaterThan(0),()=>{
       const p=d.xz.div(d.y.add(0.12)).mul(0.85);
       const cover=mix(0.47,0.2,uRain);
-      const n=clouds(p,uTime);
-      const dens=smoothstep(cover,cover.add(0.2),n);
       // Beleuchtung: Dichte Richtung Sonne abtasten -> sonnenabgewandte Seiten und Unterseiten dunkler
-      const n2=clouds(p.add(normalize(uSun.xz.add(1e-4)).mul(0.18)),uTime);
+      const nn=clouds(p,uTime,normalize(uSun.xz.add(1e-4)).mul(0.18)), n=nn.x, n2=nn.y;
+      const dens=smoothstep(cover,cover.add(0.2),n);
       const lit=clamp(n.sub(n2).mul(2.2).add(0.62),0,1).mul(smoothstep(cover.add(0.1),cover.add(0.5),n).mul(0.45).oneMinus());
       const day=mix(vec3(0.50,0.56,0.66),vec3(1.0,0.99,0.96),lit);
       const storm=mix(vec3(0.20,0.22,0.26),vec3(0.52,0.55,0.60),lit);
@@ -1916,6 +2118,18 @@ renderer.domElement.addEventListener('pointerup',e=>{
   const hit=pickGround(e.clientX,e.clientY);
   if(hit) sendCarl(hit.x,hit.z);
 });
+
+// Kleinteile (Augen, Hufe, Fellflecken, Rotoren …) werfen keinen Schatten: im Schattenbild unsichtbar, kosten aber je einen Draw-Call
+{
+  const _s=new THREE.Vector3();
+  scene.updateMatrixWorld(true);
+  scene.traverse(o=>{
+    if(!o.isMesh || !o.castShadow) return;
+    if(!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    o.getWorldScale(_s);
+    if(o.geometry.boundingSphere.radius*Math.max(_s.x,_s.y,_s.z)<0.2) o.castShadow=false;
+  });
+}
 
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
