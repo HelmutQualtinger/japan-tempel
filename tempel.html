@@ -724,7 +724,8 @@ function sakura(h=5){
 // Wind für die Kirschbäume: Stamm, Äste, Kern und Blüten wiegen sich im Vertex-Shader. Der Ausschlag wächst
 // quadratisch mit der Höhe, dazu kommt ein schnelleres, ortsabhängiges Flattern, damit Äste und Blütenwolken einzeln
 // nicken. Alle Teile verschieben mit derselben Funktion der Objektkoordinaten, deshalb bleiben die Blüten an ihren
-// Zweigen; die Schatten bewegen sich über eigene Tiefenmaterialien mit. Bei Regen stärker (windU.uGust).
+// Zweigen; die Schatten bewegen sich über eigene Tiefenmaterialien mit. Sturm: Böen (g) ziehen in Windrichtung über
+// die Szene, die Kronen bleiben nach Lee gebogen. Bei Regen stärker (windU.uGust).
 const windU={uTime:{value:0},uGust:{value:1}};
 function sway(m){
   m.onBeforeCompile=sh=>{
@@ -733,10 +734,13 @@ function sway(m){
       .replace('#include <begin_vertex>',`#include <begin_vertex>
       {
         vec3 o=modelMatrix[3].xyz; float ph=dot(o.xz,vec2(0.13,0.21));
-        float h=max(transformed.y-1.0,0.0)*0.2, b=h*h*0.4*uGust;
+        float h=max(transformed.y-1.0,0.0)*0.2, b=h*h*0.9*uGust;
         vec3 wd=normalize((vec4(-1.0,0.0,0.35,0.0)*modelMatrix).xyz);   // Windrichtung (Welt) in Objektkoordinaten
-        float s=0.05+0.6*sin(uTime*1.1+ph)+0.25*sin(uTime*2.3+ph*1.7);  // ganzer Baum
-        float f=0.5*sin(uTime*3.7+ph+dot(transformed,vec3(1.3,0.7,1.1)));   // einzelne Äste
+        float gp=uTime*0.55+dot(o.xz,vec2(0.05,-0.0175));                // Böen ziehen in Windrichtung über die Szene
+        float g=0.6+0.4*sin(gp)*sin(gp*0.61+1.3);
+        float s=g*(0.55+0.35*sin(uTime*1.7+ph)+0.15*sin(uTime*3.1+ph*1.7));   // ganzer Baum, im Sturm stets nach Lee gebogen
+        vec3 q=transformed*vec3(1.3,0.7,1.1);
+        float f=g*(0.45*sin(uTime*6.0+ph+q.x+q.y+q.z)+0.25*sin(uTime*9.7+ph-q.x*1.7+q.z));   // einzelne Äste peitschen
         transformed+=(wd*(s+f*0.5)+cross(wd,vec3(0.0,1.0,0.0))*f)*b;
         transformed.y-=abs(s)*0.25*b;
       }`);
@@ -1145,7 +1149,7 @@ function updateDrone(dt){
 }
 
 // ---------- Carl (3D-Figur, Gesicht aus Foto) ----------
-const CARL={skin:0xe2bab8, knit:'#aaa392', jeans:0x7d9cc4};
+const CARL={skin:0xd4937c, knit:'#aaa392', jeans:0x7d9cc4};
 const carlGlow=[];   // Kopf-Materialien: leichte Eigenhelligkeit, damit das Gesicht wie auf dem Foto wirkt
 function makeCarl(){
   const g=new THREE.Group();            // blickt nach +Z, linke Körperseite = +X
@@ -1196,7 +1200,7 @@ function makeCarl(){
   const headPt=(x,y,z,k=1)=>{              // Einheitsrichtung → Punkt auf dem Kopf
     const jaw=sm(-y,-0.1,0.9);
     let Z=z*R[2]*(z>0 ? 1-0.06*jaw : 1.1*(1-0.22*sm(-y,0.2,1)));
-    if(z>0) Z+=0.026*Math.exp(-((x+0.1)**2/0.006+(y+0.2)**2/0.012));       // Nase (liegt im Foto leicht links der Mitte)
+    if(z>0) Z+=0.026*Math.exp(-(x**2/0.006+(y+0.2)**2/0.012));             // Nase (im Foto mittig)
     return [x*R[0]*(1-0.2*jaw)*k, y*R[1]*k, Z*k];
   };
   const headGeo=(k,...a)=>{                // Kugel auf die Kopfform ziehen; k(x,y,z) = Abstandsfaktor der Schale
@@ -1209,13 +1213,13 @@ function makeCarl(){
   };
   // Haaransatz als Höhe y über dem Winkel a zur Blickrichtung: Stirn, Schläfe/über dem Ohr, Nacken
   const hairY=a=>0.62-0.54*sm(a,0.7,1.12)-0.66*sm(a,1.62,2.15);
-  const HAIR=['#1c1412','#291414','#382114','#3a2622','#46362f','#5a3c30','#624846','#694f4a','#734c34'];   // aus dem Foto
+  const HAIR=['#2a201d','#3a2c27','#46362f','#4f3d35','#5a463b','#634e42','#6e5848','#4c3a36','#3f312d'];   // aus dem Foto
   let hseed=5; const hrnd=()=>(hseed=(hseed*16807)%2147483647)/2147483647;   // eigener Generator, damit trnd/rnd unberührt bleiben
   const hairCv=document.createElement('canvas'); hairCv.width=1024; hairCv.height=512;
   {
     const c=hairCv.getContext('2d'), w=1024, h=512;
     const lineY=px=>{ let a=Math.abs(px/w-0.25)*Math.PI*2; if(a>Math.PI) a=Math.PI*2-a; return Math.acos(hairY(a))/Math.PI*h; };
-    c.fillStyle='#3a2622'; c.beginPath(); c.moveTo(0,0);
+    c.fillStyle='#46362f'; c.beginPath(); c.moveTo(0,0);
     for(let x=0;x<=w;x+=4) c.lineTo(x,lineY(x)-5);
     c.lineTo(w,0); c.fill();
     c.lineCap='round';
@@ -1230,7 +1234,13 @@ function makeCarl(){
   }
   const hairTex=new THREE.CanvasTexture(hairCv); hairTex.colorSpace=THREE.SRGBColorSpace; hairTex.anisotropy=8;
   const headTex=ctex(1024,512,(c,w,h)=>{   // Schädel: Haut, darauf dieselben Haare (unter der Kappe scheint nie Haut durch)
-    c.fillStyle='#e2bab8'; c.fillRect(0,0,w,h); c.drawImage(hairCv,0,0);
+    c.fillStyle='#d4937c'; c.fillRect(0,0,w,h);
+    for(let i=0;i<9000;i++){               // Bart: Stoppeln an Kiefer und Kinn, wo das Foto zu den Seiten ausblendet
+      const px=hrnd()*w, py=h*(0.6+hrnd()*0.32); let a=Math.abs(px/w-0.25)*Math.PI*2; if(a>Math.PI) a=Math.PI*2-a;
+      const y=Math.cos(py/h*Math.PI); if(a>1.75 || y>-0.28+0.25*sm(a,1.2,1.75)) continue;
+      c.fillStyle=HAIR[Math.floor(hrnd()*HAIR.length)]; c.globalAlpha=0.35+hrnd()*0.4; c.fillRect(px,py,1.5+hrnd()*2,2+hrnd()*3);
+    }
+    c.globalAlpha=1; c.drawImage(hairCv,0,0);
   });
   const headM=new THREE.MeshStandardMaterial({map:headTex,roughness:.95,emissive:0xffffff,emissiveMap:headTex});
   head.add(mesh(headGeo(()=>1,48,36),headM,0,0,0));
@@ -1960,7 +1970,7 @@ renderer.setAnimationLoop(()=>{
     u.uOpacity.value=0.55*rainB; u.uTime.value=clock.elapsedTime; u.uCam.value.copy(camera.position);
   }
   waterU.uTime.value=clock.elapsedTime; waterU.uRain.value=rainB;
-  windU.uTime.value=clock.elapsedTime; windU.uGust.value=1+1.5*rainB;
+  windU.uTime.value=clock.elapsedTime; windU.uGust.value=1+0.5*rainB;
   controls.update();
   sky.position.copy(camera.position); skyMat.uniforms.uTime.value=clock.elapsedTime;
   renderer.render(scene,camera);
