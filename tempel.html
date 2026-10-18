@@ -69,24 +69,34 @@ if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWo
 </script>
 <script type="importmap">
 {"imports":{
-  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+  "three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+  "three/tsl":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
 }}
 </script>
 <script type="module">
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { Fn, If, uniform, attribute, varying, float, vec2, vec3, vec4, sin, exp, abs, min, max, mix, pow, step, smoothstep,
+  clamp, floor, fract, dot, cross, length, normalize, transpose, select, positionLocal, positionGeometry, positionWorld,
+  positionView, normalView, modelWorldMatrix, modelViewMatrix, cameraViewMatrix, cameraProjectionMatrix, materialColor } from 'three/tsl';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ---------- Szene ----------
 const scene = new THREE.Scene();
-const renderer = new THREE.WebGLRenderer({antialias:true});
+// WebGPU, wo der Browser es kann, sonst fällt der Renderer selbst auf WebGL 2 zurück. Eigene Shader sind deshalb in TSL
+// geschrieben (Node-Materialien), das für beide Backends übersetzt wird.
+const renderer = new THREE.WebGPURenderer({antialias:true, forceWebGL:new URLSearchParams(location.search).has('webgl')});   // ?webgl erzwingt WebGL 2
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;   // PCFSoft gibt es im WebGPURenderer nicht
 document.body.appendChild(renderer.domElement);
+await renderer.init();   // vor PMREMGenerator.fromScene (Tesla) nötig
+const gfx=renderer.backend.isWebGPUBackend?'WebGPU':'WebGL 2';
+console.info('Renderer:',gfx); document.querySelector('#hud p').append(' · Grafik: '+gfx);
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 500);
 camera.position.set(22, 14, 34);
@@ -260,6 +270,7 @@ const T = {
 };
 T.bark.repeat.set(2,3);
 const std=(o)=>new THREE.MeshStandardMaterial(o);
+const stdN=(o)=>new THREE.MeshStandardNodeMaterial(o);       // für eigene Shader-Knoten (Wind, Wasser)
 const M = {
   wood:  std({map:T.wood, roughness:.6}),                       // roter Lack
   dark:  std({map:T.dark, roughness:.8}),
@@ -271,10 +282,10 @@ const M = {
   grass: std({map:T.grass, roughness:1}),
   trunk: std({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1}),
   leaf:  std({map:T.pine, roughness:1, vertexColors:true}),   // siehe pine()
-  sakura:std({map:T.blossom, alphaTest:.4, roughness:.85, vertexColors:true}),       // Blütenkärtchen, siehe sakura()
-  sakuraCore:std({color:0xdc9db2, roughness:1}),                                   // dichter Kern hinter den Kärtchen
-  sakuraBark:std({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1, color:0xcdb9b0}),
-  water: new THREE.MeshStandardMaterial({color:0x3b7a9c, roughness:.1, metalness:.3}),
+  sakura:stdN({map:T.blossom, alphaTest:.4, roughness:.85, vertexColors:true}),       // Blütenkärtchen, siehe sakura()
+  sakuraCore:stdN({color:0xdc9db2, roughness:1}),                                   // dichter Kern hinter den Kärtchen
+  sakuraBark:stdN({map:T.bark, bumpMap:T.bark, bumpScale:2, roughness:1, color:0xcdb9b0}),
+  water: stdN({color:0x3b7a9c, roughness:.1, metalness:.3}),
   glow:  std({map:T.paper, emissiveMap:T.paper, emissive:0xffa733, emissiveIntensity:0, roughness:.5}),
 };
 // Welt-Maßstab (Einheiten pro Textur-Kachel) für Quader; grain = Maserung längs der langen Kante
@@ -586,36 +597,26 @@ for(const s of [-1,1]){ const l=lantern(); l.position.set(s*9,0.2,5); l.scale.se
 const pond = mesh(new THREE.CylinderGeometry(7,7,0.15,48),M.water,16,0.15,12,false);
 pond.scale.z=0.7; scene.add(pond);
 // Wellen im Fragment-Shader: Höhenfeld aus Sinuswellen + Regenringe verbiegt die Normale (Licht/Schatten/Nebel bleiben von three.js)
-const waterU={uTime:{value:0},uRain:{value:0}};
-M.water.onBeforeCompile=sh=>{
-  Object.assign(sh.uniforms,waterU);
-  sh.vertexShader=sh.vertexShader
-    .replace('#include <common>','#include <common>\nvarying vec3 vWPos;')
-    .replace('#include <begin_vertex>','#include <begin_vertex>\nvWPos=(modelMatrix*vec4(transformed,1.0)).xyz;');
-  sh.fragmentShader=sh.fragmentShader
-    .replace('#include <common>',`#include <common>
-      varying vec3 vWPos; uniform float uTime,uRain;
-      float wRings(vec2 p){
-        p*=1.3; vec2 c=floor(p), f=fract(p)-0.5;
-        float h=fract(sin(dot(c,vec2(127.1,311.7)))*43758.5453);
-        float ph=fract(uTime*0.9+h), r=ph*0.25;
-        float d=length(f-(vec2(h,fract(h*7.3))-0.5)*0.5);
-        return sin((d-r)*45.0)*smoothstep(0.07,0.0,abs(d-r))*(1.0-ph);
-      }
-      float wH(vec2 p){
-        float t=uTime;
-        float h=sin(p.x*1.7+t*1.1)*0.5+sin(p.y*2.3-t*1.4)*0.4+sin((p.x+p.y)*3.1+t*1.9)*0.25
-               +sin(length(p-vec2(16.0,12.0))*4.0-t*2.0)*0.2;
-        return h*(0.02+0.012*uRain)+wRings(p)*0.02*uRain;
-      }`)
-    .replace('#include <normal_fragment_begin>',`#include <normal_fragment_begin>
-      float wh0=wH(vWPos.xz);
-      if(vWPos.y>0.22){
-        vec3 wn=normalize(vec3(wh0-wH(vWPos.xz+vec2(0.04,0.0)),0.04,wh0-wH(vWPos.xz+vec2(0.0,0.04))));
-        normal=normalize((viewMatrix*vec4(wn,0.0)).xyz);
-        diffuseColor.rgb+=vec3(0.22,0.32,0.36)*clamp(dot(wn.xz,vec2(0.8,0.6))*5.0,-0.6,1.0);   // Wellenkämme heller, Täler dunkler
-      }`);
-};
+const waterU={uTime:uniform(0),uRain:uniform(0)};
+{
+  const wRings=Fn(([q])=>{
+    const p=q.mul(1.3), c=floor(p), f=fract(p).sub(0.5);
+    const h=fract(sin(dot(c,vec2(127.1,311.7))).mul(43758.5453));
+    const ph=fract(waterU.uTime.mul(0.9).add(h)), r=ph.mul(0.25);
+    const d=length(f.sub(vec2(h,fract(h.mul(7.3))).sub(0.5).mul(0.5)));
+    return sin(d.sub(r).mul(45)).mul(smoothstep(0,0.07,abs(d.sub(r))).oneMinus()).mul(ph.oneMinus());
+  }).setLayout({name:'wRings',type:'float',inputs:[{name:'q',type:'vec2'}]});
+  const wH=Fn(([p])=>{
+    const t=waterU.uTime;
+    const h=sin(p.x.mul(1.7).add(t.mul(1.1))).mul(0.5).add(sin(p.y.mul(2.3).sub(t.mul(1.4))).mul(0.4))
+      .add(sin(p.x.add(p.y).mul(3.1).add(t.mul(1.9))).mul(0.25)).add(sin(length(p.sub(vec2(16,12))).mul(4).sub(t.mul(2))).mul(0.2));
+    return h.mul(waterU.uRain.mul(0.012).add(0.02)).add(wRings(p).mul(0.02).mul(waterU.uRain));
+  }).setLayout({name:'wH',type:'float',inputs:[{name:'p',type:'vec2'}]});
+  const p=positionWorld.xz, top=positionWorld.y.greaterThan(0.22), wh0=wH(p);
+  const wn=normalize(vec3(wh0.sub(wH(p.add(vec2(0.04,0)))),0.04,wh0.sub(wH(p.add(vec2(0,0.04))))));
+  M.water.normalNode=select(top,normalize(cameraViewMatrix.mul(vec4(wn,0)).xyz),normalView);
+  M.water.colorNode=select(top,materialColor.add(vec3(0.22,0.32,0.36).mul(clamp(dot(wn.xz,vec2(0.8,0.6)).mul(5),-0.6,1))),materialColor);   // Wellenkämme heller, Täler dunkler
+}
 // Steinrand
 const ring = mesh(new THREE.TorusGeometry(7.1,0.35,8,48),M.stone,16,0.2,12);
 ring.rotation.x=Math.PI/2; ring.scale.y=0.7; scene.add(ring);
@@ -674,7 +675,7 @@ function sakura(h=5){
     branch(V(0,h*0.33,0),V(Math.cos(a)*Math.cos(el),Math.sin(el),Math.sin(a)*Math.cos(el)),h*(0.4+srnd()*0.1),0.12,0,srnd());
   }
   clumps.push([V(0,h*0.8,0),1.1,true,0.5,0]);
-  const bark=mesh(mergeGeometries(wood),M.sakuraBark); bark.customDepthMaterial=sakuraDepth.wood; g.add(bark);
+  const bark=mesh(mergeGeometries(wood),M.sakuraBark); g.add(bark);
 
   const pos=[], nor=[], uv=[], col=[], idx=[], cores=[];
   const mid=V(0,h*0.5,0), d=V(), n=V(), u=V(), w=V(), p=V(), c=new THREE.Color();
@@ -717,39 +718,32 @@ function sakura(h=5){
   geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
   geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
   geo.setIndex(idx);
-  const core=mesh(mergeGeometries(cores),M.sakuraCore); core.customDepthMaterial=sakuraDepth.wood; g.add(core);
-  const bl=mesh(geo,M.sakura); bl.receiveShadow=false; bl.customDepthMaterial=sakuraDepth.blossom; g.add(bl);        // Schatten auf den Kärtchen würde nur flimmern
+  const core=mesh(mergeGeometries(cores),M.sakuraCore); g.add(core);
+  const bl=mesh(geo,M.sakura); bl.receiveShadow=false; g.add(bl);        // Schatten auf den Kärtchen würde nur flimmern
   return g;
 }
 // Wind für die Kirschbäume: Stamm, Äste, Kern und Blüten wiegen sich im Vertex-Shader. Der Ausschlag wächst
 // quadratisch mit der Höhe, dazu kommt ein schnelleres, ortsabhängiges Flattern, damit Äste und Blütenwolken einzeln
 // nicken. Alle Teile verschieben mit derselben Funktion der Objektkoordinaten, deshalb bleiben die Blüten an ihren
-// Zweigen; die Schatten bewegen sich über eigene Tiefenmaterialien mit. Sturm: Böen (g) ziehen in Windrichtung über
+// Zweigen; die Schatten bewegen sich mit (positionNode gilt auch im Schattenpass). Sturm: Böen (g) ziehen in Windrichtung über
 // die Szene, die Kronen bleiben nach Lee gebogen. Bei Regen stärker (windU.uGust).
-const windU={uTime:{value:0},uGust:{value:1}};
-function sway(m){
-  m.onBeforeCompile=sh=>{
-    Object.assign(sh.uniforms,windU);
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uTime,uGust;')
-      .replace('#include <begin_vertex>',`#include <begin_vertex>
-      {
-        vec3 o=modelMatrix[3].xyz; float ph=dot(o.xz,vec2(0.13,0.21));
-        float h=max(transformed.y-1.0,0.0)*0.2, b=h*h*0.9*uGust;
-        vec3 wd=normalize((vec4(-1.0,0.0,0.35,0.0)*modelMatrix).xyz);   // Windrichtung (Welt) in Objektkoordinaten
-        float gp=uTime*0.55+dot(o.xz,vec2(0.05,-0.0175));                // Böen ziehen in Windrichtung über die Szene
-        float g=0.6+0.4*sin(gp)*sin(gp*0.61+1.3);
-        float s=g*(0.55+0.35*sin(uTime*1.7+ph)+0.15*sin(uTime*3.1+ph*1.7));   // ganzer Baum, im Sturm stets nach Lee gebogen
-        vec3 q=transformed*vec3(1.3,0.7,1.1);
-        float f=g*(0.45*sin(uTime*6.0+ph+q.x+q.y+q.z)+0.25*sin(uTime*9.7+ph-q.x*1.7+q.z));   // einzelne Äste peitschen
-        transformed+=(wd*(s+f*0.5)+cross(wd,vec3(0.0,1.0,0.0))*f)*b;
-        transformed.y-=abs(s)*0.25*b;
-      }`);
-  };
-  return m;
-}
+const windU={uTime:uniform(0),uGust:uniform(1)};
+const swayPos=Fn(()=>{
+  const p=positionLocal, t=windU.uTime;
+  const o=modelWorldMatrix.element(3).xyz, ph=dot(o.xz,vec2(0.13,0.21));
+  const h=max(p.y.sub(1),0).mul(0.2), b=h.mul(h).mul(0.9).mul(windU.uGust);
+  const wd=normalize(transpose(modelWorldMatrix).mul(vec4(-1,0,0.35,0)).xyz);   // Windrichtung (Welt) in Objektkoordinaten
+  const gp=t.mul(0.55).add(dot(o.xz,vec2(0.05,-0.0175)));                       // Böen ziehen in Windrichtung über die Szene
+  const g=sin(gp).mul(sin(gp.mul(0.61).add(1.3))).mul(0.4).add(0.6);
+  const s=g.mul(sin(t.mul(1.7).add(ph)).mul(0.35).add(sin(t.mul(3.1).add(ph.mul(1.7))).mul(0.15)).add(0.55));   // ganzer Baum, im Sturm stets nach Lee gebogen
+  const q=p.mul(vec3(1.3,0.7,1.1));
+  const f=g.mul(sin(t.mul(6).add(ph).add(q.x).add(q.y).add(q.z)).mul(0.45)
+    .add(sin(t.mul(9.7).add(ph).sub(q.x.mul(1.7)).add(q.z)).mul(0.25)));                        // einzelne Äste peitschen
+  return p.add(wd.mul(s.add(f.mul(0.5))).add(cross(wd,vec3(0,1,0)).mul(f)).mul(b)).sub(vec3(0,abs(s).mul(0.25).mul(b),0));
+});
+// positionNode gilt auch im Schattenpass, die Schatten wiegen also ohne eigene Tiefenmaterialien mit
+const sway=m=>{ m.positionNode=swayPos(); return m; };
 [M.sakura,M.sakuraCore,M.sakuraBark].forEach(sway);
-const swayDepth=(map,alphaTest=0)=>sway(new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,map,alphaTest}));
-const sakuraDepth={wood:swayDepth(null), blossom:swayDepth(T.blossom,0.4)};
 
 // Kiefer: sich verjüngender Stamm, der sich leicht neigt und per vnoise windet; darauf 4–7 Nadeletagen – Kegel, deren
 // Mantel per vnoise ausgebeult ist und deren Rand durchhängt, jede etwas verschoben, gekippt und eigen eingefärbt
@@ -993,7 +987,7 @@ const deers=deerDefs.map(def=>{
   const curve=new THREE.CatmullRomCurve3(def.pts,true,'catmullrom',0.5);
   return {...def, mesh:mesh3, curve, len:curve.getLength(), phase:rnd()*6};
 });
-const clock=new THREE.Clock();
+const clock=new THREE.Timer();
 function updateDeer(dt){
   for(const d of deers){
     d.t=(d.t+d.speed*dt/d.len)%1;
@@ -1128,7 +1122,7 @@ function droneCeiling(x,z){                     // Mindesthöhe über Hinderniss
 }
 const droneGoal=new THREE.Vector3(), droneOld=new THREE.Vector3();
 function updateDrone(dt){
-  const d=drone, time=clock.elapsedTime, p=d.pos;
+  const d=drone, time=clock.getElapsed(), p=d.pos;
   const cx=carl.pos.x, cz=carl.pos.z;
   droneGoal.set(cx, Math.max(groundY(cx,cz)+3.4+d.above, droneCeiling(cx,cz), droneCeiling(p.x,p.z)), cz);
   droneOld.copy(p);
@@ -1484,33 +1478,20 @@ const dustStart=new THREE.InstancedBufferAttribute(new Float32Array(DUST_N*3),3)
       dustLife=new THREE.InstancedBufferAttribute(new Float32Array(DUST_N*3).fill(-100),3);   // Geburt, Dauer, Größe
 dustGeo.setAttribute('aStart',dustStart); dustGeo.setAttribute('aVel',dustVel); dustGeo.setAttribute('aLife',dustLife);
 dustGeo.instanceCount=DUST_N;
-const dustMat=new THREE.ShaderMaterial({
-  transparent:true, depthWrite:false,
-  uniforms:{uTime:{value:0},uDim:{value:1},uDry:{value:1}},
-  vertexShader:`
-    attribute vec3 aStart,aVel,aLife;
-    uniform float uTime;
-    varying vec2 vP; varying float vK;
-    void main(){
-      float t=uTime-aLife.x, k=t/aLife.y, e=(1.0-exp(-1.8*t))/1.8;       // Luftwiderstand 1.8, leichter Auftrieb
-      vec3 p=aStart+aVel*e; p.y+=0.0833*(t-e);
-      vK=k; vP=position.xy*2.0;
-      vec4 mv=modelViewMatrix*vec4(p,1.0);
-      mv.xy+=position.xy*aLife.z*(1.0+2.6*k)*step(0.0,k)*step(k,1.0);
-      gl_Position=projectionMatrix*mv;
-    }`,
-  fragmentShader:`
-    uniform float uDim,uDry;
-    varying vec2 vP; varying float vK;
-    void main(){
-      float r=length(vP);
-      float a=r<0.5?mix(1.0,0.45,r*2.0):mix(0.45,0.0,min(r*2.0-1.0,1.0));
-      a*=0.5*(1.0-vK)*min(1.0,vK*8.0)*uDry;
-      if(a<0.003) discard;
-      gl_FragColor=vec4(vec3(0.82,0.77,0.65)*uDim,a);
-      #include <colorspace_fragment>
-    }`,
-});
+const dustU={uTime:uniform(0),uDim:uniform(1),uDry:uniform(1)};
+const dustMat=new THREE.MeshBasicNodeMaterial({transparent:true, depthWrite:false, fog:false, alphaTest:0.003});
+{
+  const aStart=attribute('aStart','vec3'), aVel=attribute('aVel','vec3'), aLife=attribute('aLife','vec3');
+  const t=dustU.uTime.sub(aLife.x), k=t.div(aLife.y), e=exp(t.mul(-1.8)).oneMinus().div(1.8);   // Luftwiderstand 1.8, leichter Auftrieb
+  const p=aStart.add(aVel.mul(e)).add(vec3(0,t.sub(e).mul(0.0833),0));
+  const mv=modelViewMatrix.mul(vec4(p,1));
+  const size=aLife.z.mul(k.mul(2.6).add(1)).mul(step(0,k)).mul(step(k,1));
+  dustMat.vertexNode=cameraProjectionMatrix.mul(vec4(mv.xy.add(positionGeometry.xy.mul(size)),mv.zw));
+  const vK=varying(k), r=length(varying(positionGeometry.xy.mul(2)));
+  const a=select(r.lessThan(0.5),mix(1,0.45,r.mul(2)),mix(0.45,0,min(r.mul(2).sub(1),1)));
+  dustMat.colorNode=vec3(0.82,0.77,0.65).mul(dustU.uDim);
+  dustMat.opacityNode=a.mul(0.5).mul(vK.oneMinus()).mul(min(1,vK.mul(8))).mul(dustU.uDry);
+}
 const dust=new THREE.Mesh(dustGeo,dustMat); dust.frustumCulled=false; scene.add(dust);
 let dustI=0;
 const onGravel=(x,z)=>groundY(x,z)===0.2;
@@ -1519,13 +1500,12 @@ function puff(x,z,dir,n=5){
     const i=dustI=(dustI+1)%DUST_N;
     dustStart.setXYZ(i,x+(Math.random()-.5)*0.3,0.3,z+(Math.random()-.5)*0.3);
     dustVel.setXYZ(i,-dir.x*0.9+(Math.random()-.5)*0.9,0.35+Math.random()*0.5,-dir.z*0.9+(Math.random()-.5)*0.9);
-    dustLife.setXYZ(i,clock.elapsedTime,0.9+Math.random()*0.7,0.35+Math.random()*0.3);
+    dustLife.setXYZ(i,clock.getElapsed(),0.9+Math.random()*0.7,0.35+Math.random()*0.3);
   }
   dustStart.needsUpdate=dustVel.needsUpdate=dustLife.needsUpdate=true;
 }
 function updateDust(){
-  const u=dustMat.uniforms;
-  u.uTime.value=clock.elapsedTime; u.uDim.value=1-0.7*blend; u.uDry.value=1-0.85*rainB;   // nachts dunkler, bei Regen kaum Staub
+  dustU.uTime.value=clock.getElapsed(); dustU.uDim.value=1-0.7*blend; dustU.uDry.value=1-0.85*rainB;   // nachts dunkler, bei Regen kaum Staub
 }
 // Schrittgeräusche (Web Audio): kurzer Rauschimpuls je Fußaufsatz, Klang je nach Untergrund.
 // Der AudioContext darf erst nach einer Nutzeraktion starten -> beim ersten Klick/Tippen/Tastendruck.
@@ -1583,7 +1563,7 @@ function updateCarl(dt){
       if(d.resume!==null){ d.mode='loop'; d.t=d.resume; d.resume=null; }     // wieder auf der Runde
     }
   }
-  if(goalMark.visible) goalMark.scale.setScalar(1+0.12*Math.sin(clock.elapsedTime*6));
+  if(goalMark.visible) goalMark.scale.setScalar(1+0.12*Math.sin(clock.getElapsed()*6));
   d.move+=((moving?1:0)-d.move)*Math.min(1,dt*8);                         // 0 = steht, 1 = läuft (weicher Übergang)
   const mv=d.move;
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
@@ -1610,8 +1590,8 @@ function updateCarl(dt){
   body.rotation.x=lean; body.rotation.y=s*(0.08+0.06*run+0.06*sp)*mv;
   body.position.set(0,0.78*(1-Math.cos(lean)),-0.78*Math.sin(lean));
   head.rotation.x=-(0.1*run+0.15*sp)*mv;                                   // Blick bleibt trotz Vorlage nach vorn
-  head.rotation.y=-s*(0.08+0.06*run)*mv+Math.sin(clock.elapsedTime*0.7)*0.2;   // schaut sich um
-  head.rotation.z=Math.sin(clock.elapsedTime*0.9)*0.04;
+  head.rotation.y=-s*(0.08+0.06*run)*mv+Math.sin(clock.getElapsed()*0.7)*0.2;   // schaut sich um
+  head.rotation.z=Math.sin(clock.getElapsed()*0.9)*0.04;
   // tiefster Fuß steht auf dem Boden, dazwischen eine kurze Flugphase
   p.y=groundY(p.x,p.z)+S*(-low+(0.035*run+0.09*sp)*mv*Math.abs(c));
   d.mesh.position.copy(p);
@@ -1658,8 +1638,8 @@ function updateChaser(dt){
   d.mesh.position.set(x,(yf+yb)/2+Math.abs(Math.cos(d.phase))*0.05*trot,z);
   d.mesh.rotation.y=Math.atan2(tg.x,tg.z);
   d.mesh.rotation.x+=(-Math.atan2(yf-yb,2*r)-d.mesh.rotation.x)*Math.min(1,dt*10);
-  neck.rotation.x=Math.sin(clock.elapsedTime*1.3)*0.06+0.25*trot;       // Kopf beim Laufen etwas vorgestreckt
-  head.rotation.x=0.35+Math.sin(clock.elapsedTime*1.1+1)*0.05;
+  neck.rotation.x=Math.sin(clock.getElapsed()*1.3)*0.06+0.25*trot;       // Kopf beim Laufen etwas vorgestreckt
+  head.rotation.x=0.35+Math.sin(clock.getElapsed()*1.1+1)*0.05;
 }
 
 // ---------- Himmel / Tag-Nacht ----------
@@ -1682,76 +1662,75 @@ function applyLight(b){
   const tu=tesla.userData;                                  // Auto: nachts Licht an, Spiegelungen dunkler
   tu.lamp.emissiveIntensity=0.3+2.2*b; tu.tail.emissiveIntensity=0.35+1.4*b; tu.screen.emissiveIntensity=0.5+0.9*b;
   for(const m of tu.env) m.envMapIntensity=0.7*(1-0.8*b)*(1-0.4*rainB);
-  const u=skyMat.uniforms;
+  const u=skyU;
   u.uHorizon.value.copy(scene.background);
   u.uZenith.value.copy(zenDay).lerp(zenNight,b).lerp(scene.background,rainB*0.9);
   u.uNight.value=b; u.uRain.value=rainB;
 }
 // ---------- Himmelskuppel: Verlauf, Sonne/Mond, prozedurale Wolken (fBm-Rauschen), Sterne ----------
 const zenDay=new THREE.Color(0x2f74c9), zenNight=new THREE.Color(0x060a1c);
-const skyMat=new THREE.ShaderMaterial({
-  side:THREE.BackSide, depthWrite:false, depthTest:false, fog:false,
-  uniforms:{
-    uHorizon:{value:new THREE.Color()}, uZenith:{value:new THREE.Color()},
-    uSun:{value:sun.position.clone().normalize()},
-    uNight:{value:0}, uRain:{value:0}, uTime:{value:0},
-  },
-  vertexShader:`
-    varying vec3 vDir;
-    void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-  fragmentShader:`
-    precision highp float;
-    varying vec3 vDir;
-    uniform vec3 uHorizon,uZenith,uSun; uniform float uNight,uRain,uTime;
-    float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
-    float noise(vec2 p){
-      vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-      return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+const skyU={
+  uHorizon:uniform(new THREE.Color()), uZenith:uniform(new THREE.Color()),
+  uSun:uniform(sun.position.clone().normalize()),
+  uNight:uniform(0), uRain:uniform(0), uTime:uniform(0),
+};
+const skyMat=new THREE.MeshBasicNodeMaterial({side:THREE.BackSide, depthWrite:false, depthTest:false, fog:false});
+{
+  const {uHorizon,uZenith,uSun,uNight,uRain,uTime}=skyU;
+  const hash=Fn(([q])=>{
+    const p=fract(q.mul(vec2(123.34,456.21))).toVar();
+    p.addAssign(dot(p,p.add(45.32)));
+    return fract(p.x.mul(p.y));
+  }).setLayout({name:'skyHash',type:'float',inputs:[{name:'q',type:'vec2'}]});
+  const noise=Fn(([p])=>{
+    const i=floor(p), f0=fract(p), f=f0.mul(f0).mul(f0.mul(-2).add(3));
+    return mix(mix(hash(i),hash(i.add(vec2(1,0))),f.x),mix(hash(i.add(vec2(0,1))),hash(i.add(vec2(1,1))),f.x),f.y);
+  }).setLayout({name:'skyNoise',type:'float',inputs:[{name:'p',type:'vec2'}]});
+  const fbm=Fn(([q])=>{
+    const v=float(0).toVar(), p=vec2(q).toVar();
+    for(let i=0,a=0.5;i<6;i++,a*=0.5){
+      v.addAssign(noise(p).mul(a));
+      p.assign(vec2(p.x.mul(1.6).sub(p.y.mul(1.2)),p.x.mul(1.2).add(p.y.mul(1.6))).add(3.1));   // mat2(1.6,1.2,-1.2,1.6)*p
     }
-    float fbm(vec2 p){
-      float v=0.0, a=0.5; mat2 m=mat2(1.6,1.2,-1.2,1.6);
-      for(int i=0;i<6;i++){ v+=a*noise(p); p=m*p+3.1; a*=0.5; }
-      return v;
-    }
-    float clouds(vec2 p,float t){
-      vec2 q=p+vec2(t*0.03,t*0.011);                              // Windrichtung und -tempo
-      q+=0.55*vec2(fbm(q*0.6+t*0.004),fbm(q*0.6+5.2));          // Verwirbelung
-      return fbm(q)*0.72+fbm(q*2.7-t*0.01)*0.28;
-    }
-    void main(){
-      vec3 d=normalize(vDir);
-      float up=max(d.y,0.0);
-      vec3 col=mix(uHorizon,uZenith,pow(up,0.55));
-      // Sonne bzw. Mond mit Hof
-      float sd=max(dot(d,uSun),0.0), clear=1.0-uRain;
-      vec3 sunCol=mix(vec3(1.0,0.93,0.78),vec3(0.82,0.88,1.0),uNight);
-      col+=sunCol*(pow(sd,18.0)*0.16+pow(sd,180.0)*0.35)*clear*mix(1.0,0.45,uNight);
-      col=mix(col,sunCol*mix(1.25,0.95,uNight),smoothstep(0.9993,0.9996,sd)*clear);
-      // Sterne
-      vec2 sp=d.xz/(abs(d.y)+0.35)*90.0; float st=hash(floor(sp));
-      float star=step(0.992,st)*smoothstep(0.5,0.1,length(fract(sp)-0.5))*(0.5+0.5*sin(uTime*2.0+st*90.0));
-      col+=vec3(star)*uNight*clear*smoothstep(0.02,0.25,d.y);
-      // Wolkenschicht: Blickstrahl auf eine Ebene projiziert, zum Horizont hin gestaucht
-      if(d.y>0.0){
-        vec2 p=d.xz/(d.y+0.12)*0.85;
-        float cover=mix(0.47,0.2,uRain);
-        float n=clouds(p,uTime);
-        float dens=smoothstep(cover,cover+0.2,n);
-        // Beleuchtung: Dichte Richtung Sonne abtasten -> sonnenabgewandte Seiten und Unterseiten dunkler
-        float n2=clouds(p+normalize(uSun.xz+1e-4)*0.18,uTime);
-        float lit=clamp(0.62+(n-n2)*2.2,0.0,1.0)*(1.0-0.45*smoothstep(cover+0.1,cover+0.5,n));
-        vec3 day=mix(vec3(0.50,0.56,0.66),vec3(1.0,0.99,0.96),lit);
-        vec3 storm=mix(vec3(0.20,0.22,0.26),vec3(0.52,0.55,0.60),lit);
-        vec3 c=mix(day,storm,uRain);
-        c+=sunCol*pow(sd,6.0)*0.25*(1.0-dens)*clear;                 // helle Ränder gegen die Sonne
-        c*=mix(1.0,0.16,uNight); c+=vec3(0.03,0.04,0.07)*uNight*lit; // nachts fahles Mondlicht
-        c=mix(c,uHorizon,smoothstep(0.22,0.0,d.y)*0.85);             // Dunst am Horizont
-        col=mix(col,c,dens*smoothstep(0.0,0.07,d.y)*mix(0.96,1.0,uRain));
-      }
-      gl_FragColor=vec4(col,1.0);
-      #include <colorspace_fragment>
-    }`,
-});
+    return v;
+  }).setLayout({name:'skyFbm',type:'float',inputs:[{name:'q',type:'vec2'}]});
+  const clouds=Fn(([p,t])=>{
+    const q=p.add(vec2(t.mul(0.03),t.mul(0.011))).toVar();                       // Windrichtung und -tempo
+    q.addAssign(vec2(fbm(q.mul(0.6).add(t.mul(0.004))),fbm(q.mul(0.6).add(5.2))).mul(0.55));   // Verwirbelung
+    return fbm(q).mul(0.72).add(fbm(q.mul(2.7).sub(t.mul(0.01))).mul(0.28));
+  }).setLayout({name:'skyClouds',type:'float',inputs:[{name:'p',type:'vec2'},{name:'t',type:'float'}]});
+  skyMat.colorNode=Fn(()=>{
+    const d=normalize(positionGeometry), up=max(d.y,0);
+    const col=mix(uHorizon,uZenith,pow(up,0.55)).toVar();
+    // Sonne bzw. Mond mit Hof
+    const sd=max(dot(d,uSun),0), clear=uRain.oneMinus();
+    const sunCol=mix(vec3(1.0,0.93,0.78),vec3(0.82,0.88,1.0),uNight);
+    col.addAssign(sunCol.mul(pow(sd,18).mul(0.16).add(pow(sd,180).mul(0.35))).mul(clear).mul(mix(1,0.45,uNight)));
+    col.assign(mix(col,sunCol.mul(mix(1.25,0.95,uNight)),smoothstep(0.9993,0.9996,sd).mul(clear)));
+    // Sterne
+    const sp=d.xz.div(abs(d.y).add(0.35)).mul(90), st=hash(floor(sp));
+    const star=step(0.992,st).mul(smoothstep(0.1,0.5,length(fract(sp).sub(0.5))).oneMinus()).mul(sin(uTime.mul(2).add(st.mul(90))).mul(0.5).add(0.5));
+    col.addAssign(vec3(star).mul(uNight).mul(clear).mul(smoothstep(0.02,0.25,d.y)));
+    // Wolkenschicht: Blickstrahl auf eine Ebene projiziert, zum Horizont hin gestaucht
+    If(d.y.greaterThan(0),()=>{
+      const p=d.xz.div(d.y.add(0.12)).mul(0.85);
+      const cover=mix(0.47,0.2,uRain);
+      const n=clouds(p,uTime);
+      const dens=smoothstep(cover,cover.add(0.2),n);
+      // Beleuchtung: Dichte Richtung Sonne abtasten -> sonnenabgewandte Seiten und Unterseiten dunkler
+      const n2=clouds(p.add(normalize(uSun.xz.add(1e-4)).mul(0.18)),uTime);
+      const lit=clamp(n.sub(n2).mul(2.2).add(0.62),0,1).mul(smoothstep(cover.add(0.1),cover.add(0.5),n).mul(0.45).oneMinus());
+      const day=mix(vec3(0.50,0.56,0.66),vec3(1.0,0.99,0.96),lit);
+      const storm=mix(vec3(0.20,0.22,0.26),vec3(0.52,0.55,0.60),lit);
+      const c=mix(day,storm,uRain).toVar();
+      c.addAssign(sunCol.mul(pow(sd,6).mul(0.25)).mul(dens.oneMinus()).mul(clear));       // helle Ränder gegen die Sonne
+      c.mulAssign(mix(1,0.16,uNight)); c.addAssign(vec3(0.03,0.04,0.07).mul(uNight).mul(lit));   // nachts fahles Mondlicht
+      c.assign(mix(c,uHorizon,smoothstep(0,0.22,d.y).oneMinus().mul(0.85)));            // Dunst am Horizont
+      col.assign(mix(col,c,dens.mul(smoothstep(0,0.07,d.y)).mul(mix(0.96,1,uRain))));
+    });
+    return col;
+  })();
+}
 const sky=new THREE.Mesh(new THREE.SphereGeometry(400,32,16),skyMat);
 sky.renderOrder=-10; sky.frustumCulled=false; scene.add(sky);
 // ---------- Regen ----------
@@ -1768,32 +1747,17 @@ const rainGeo=new THREE.BufferGeometry();
 rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPos,3));
 rainGeo.setAttribute('aSpeed',new THREE.BufferAttribute(rainSpd,1));
 rainGeo.setAttribute('aTop',new THREE.BufferAttribute(rainTop,1));
-const rainMat=new THREE.ShaderMaterial({
-  transparent:true, depthWrite:false,
-  uniforms:{uTime:{value:0},uOpacity:{value:0},uCam:{value:new THREE.Vector3()},uColor:{value:new THREE.Color(0xaec6e0)}},
-  vertexShader:`
-    attribute float aSpeed,aTop;
-    uniform float uTime; uniform vec3 uCam;
-    varying float vA;
-    const float BOX=${RAIN_BOX}.0, H=${RAIN_H}.0, WIND=2.4, LEN=0.9;
-    void main(){
-      vec3 p=position;
-      p.y=mod(p.y-aSpeed*uTime,H);
-      p.x-=WIND*uTime;
-      p.xz=mod(p.xz-uCam.xz+BOX*0.5,BOX)-BOX*0.5+uCam.xz;
-      p.y+=aTop*LEN; p.x+=aTop*LEN*WIND/aSpeed;          // Strich liegt in Fallrichtung
-      vec4 mv=modelViewMatrix*vec4(p,1.0);
-      vA=1.0-smoothstep(35.0,58.0,-mv.z);
-      gl_Position=projectionMatrix*mv;
-    }`,
-  fragmentShader:`
-    uniform vec3 uColor; uniform float uOpacity;
-    varying float vA;
-    void main(){
-      gl_FragColor=vec4(uColor,uOpacity*vA);
-      #include <colorspace_fragment>
-    }`,
-});
+const rainU={uTime:uniform(0),uOpacity:uniform(0),uCam:uniform(new THREE.Vector3())};
+const rainMat=new THREE.LineBasicNodeMaterial({color:0xaec6e0, transparent:true, depthWrite:false, fog:false});
+{
+  const BOX=RAIN_BOX, H=RAIN_H, WIND=2.4, LEN=0.9;
+  const gmod=(x,y)=>x.sub(floor(x.div(y)).mul(y));        // mod wie in GLSL (auch für negative x)
+  const aSpeed=attribute('aSpeed','float'), aTop=attribute('aTop','float'), {uTime,uCam}=rainU, p=positionGeometry;
+  const xz=gmod(vec2(p.x.sub(uTime.mul(WIND)),p.z).sub(uCam.xz).add(BOX*0.5),BOX).sub(BOX*0.5).add(uCam.xz);
+  // Strich liegt in Fallrichtung
+  rainMat.positionNode=vec3(xz.x.add(aTop.mul(LEN*WIND).div(aSpeed)),gmod(p.y.sub(aSpeed.mul(uTime)),H).add(aTop.mul(LEN)),xz.y);
+  rainMat.opacityNode=rainU.uOpacity.mul(smoothstep(35,58,positionView.z.negate()).oneMinus());
+}
 const rain=new THREE.LineSegments(rainGeo,rainMat);
 rain.frustumCulled=false; rain.visible=false; scene.add(rain);
 let raining=false, rainB=0;
@@ -1961,18 +1925,18 @@ addEventListener('resize',()=>{
 renderer.setAnimationLoop(()=>{
   blend += ((night?1:0)-blend)*0.05;
   rainB += ((raining?1:0)-rainB)*0.03;
-  const dt=Math.min(clock.getDelta(),0.05);
+  clock.update(); const dt=Math.min(clock.getDelta(),0.05);
   updateDeer(dt); updateGiraffe(dt); updateCarl(dt); updateDrone(dt); updateChaser(dt); updateDust(); updateGyro(); updateFollow();
   applyLight(blend);
   rain.visible=rainB>0.01;
   if(rain.visible){
-    const u=rainMat.uniforms;
-    u.uOpacity.value=0.55*rainB; u.uTime.value=clock.elapsedTime; u.uCam.value.copy(camera.position);
+    const u=rainU;
+    u.uOpacity.value=0.55*rainB; u.uTime.value=clock.getElapsed(); u.uCam.value.copy(camera.position);
   }
-  waterU.uTime.value=clock.elapsedTime; waterU.uRain.value=rainB;
-  windU.uTime.value=clock.elapsedTime; windU.uGust.value=1+0.5*rainB;
+  waterU.uTime.value=clock.getElapsed(); waterU.uRain.value=rainB;
+  windU.uTime.value=clock.getElapsed(); windU.uGust.value=1+0.5*rainB;
   controls.update();
-  sky.position.copy(camera.position); skyMat.uniforms.uTime.value=clock.elapsedTime;
+  sky.position.copy(camera.position); skyU.uTime.value=clock.getElapsed();
   renderer.render(scene,camera);
 });
 </script>
