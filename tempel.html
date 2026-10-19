@@ -61,11 +61,28 @@
   <button id="rotBtn" aria-pressed="false">Auto-Rotation</button>
   <button id="musicBtn" aria-pressed="false">Musik</button>
   <button id="gyroBtn" aria-pressed="false" hidden>Neigung</button>
+  <button id="installBtn" hidden>Als App installieren</button>
 </div>
 
 <script>
 // PWA: Service Worker für Installation und Offline-Betrieb (nur über http(s), nicht file://)
 if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+// Installieren-Knopf: Chrome/Edge/Android liefern beforeinstallprompt; iOS-Safari kennt das nicht,
+// dort zeigt der Knopf nur den Weg über „Teilen → Zum Home-Bildschirm“.
+(()=>{
+  const btn=document.getElementById('installBtn');
+  const standalone=matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches||navigator.standalone;
+  if(standalone) return;
+  let ask=null;
+  addEventListener('beforeinstallprompt',e=>{e.preventDefault(); ask=e; btn.hidden=false;});
+  addEventListener('appinstalled',()=>{ask=null; btn.hidden=true;});
+  const ios=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(ios) btn.hidden=false;
+  btn.onclick=async()=>{
+    if(ask){ ask.prompt(); const {outcome}=await ask.userChoice; ask=null; if(outcome==='accepted') btn.hidden=true; }
+    else if(ios) document.querySelector('#hud p').textContent='Installieren: unten auf „Teilen“ tippen, dann „Zum Home-Bildschirm“.';
+  };
+})();
 </script>
 <script type="importmap">
 {"imports":{
